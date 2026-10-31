@@ -2,19 +2,22 @@
  * Reports: how a unit is doing, in fixed fields. Status colours roll up
  * mechanically (a unit shows the worst in its subtree); the words are
  * written by each unit's agent. A unit whose children report may only say
- * what their reports say: every sentence cites at least one report from below
- * (guardrail ①), so a summary can't inflate or invent progress.
+ * what their reports say: every sentence cites at least one report from
+ * below, so a summary can't inflate or invent progress.
  */
 
 import { and, desc, eq, inArray } from "drizzle-orm";
 
 import { db as defaultDb, type Database } from "../db";
 import { type ReportLine, type ReportNumber, unitReports } from "../db/schema";
+import { type Actor, actorLabel } from "./actors";
+import { TreeError } from "./errors";
+import { write } from "./events";
 import {
   descendants,
   findUnit,
   listUnits,
-  TreeError,
+  requireActsFor,
   type Unit,
 } from "./units";
 
@@ -42,12 +45,13 @@ export async function submitReport(
     blocked?: LineInput[];
     next?: LineInput[];
     numbers?: ReportNumber[];
-    by: string;
   },
+  by: Actor,
   { now = new Date() }: { now?: Date } = {},
   database: Database = defaultDb(),
 ): Promise<Report> {
   const all = await listUnits(database);
+  requireActsFor(all, by, input.unit, "report for it");
   const unit = findUnit(all, input.unit);
   const headline = line(input.headline);
   if (!headline.text)
@@ -66,20 +70,34 @@ export async function submitReport(
     [headline, ...Object.values(sections).flat()],
     database,
   );
-  const [row] = await database
-    .insert(unitReports)
-    .values({
-      unitId: unit.id,
-      directiveId: input.directive ?? null,
-      status: input.status,
-      headline,
-      ...sections,
-      numbers: input.numbers ?? [],
-      author: input.by,
-      createdAt: now,
-    })
-    .returning();
-  return row;
+  return write(
+    database,
+    by,
+    async (tx) => {
+      const [row] = await tx
+        .insert(unitReports)
+        .values({
+          unitId: unit.id,
+          directiveId: input.directive ?? null,
+          status: input.status,
+          headline,
+          ...sections,
+          numbers: input.numbers ?? [],
+          author: actorLabel(by),
+          createdAt: now,
+        })
+        .returning();
+      return row;
+    },
+    (r) => ({
+      what: "report.submitted",
+      on: { kind: "report", id: r.id },
+      unit: unit.id,
+      why: input.directive != null ? `directive:${input.directive}` : null,
+      after: { status: r.status, headline: r.headline.text },
+    }),
+    now,
+  );
 }
 
 function line(input: LineInput): ReportLine {

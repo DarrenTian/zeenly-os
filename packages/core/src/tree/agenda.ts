@@ -8,8 +8,8 @@ import { eq, inArray } from "drizzle-orm";
 
 import { db as defaultDb, type Database } from "../db";
 import { directiveAssignments, directives } from "../db/schema";
-import { listUnitDocs, type UnitDoc } from "./docs";
 import { type Assignment, type Directive, listDirectives } from "./directives";
+import { latestDocBodies, listUnitDocs, type UnitDoc } from "./docs";
 import {
   answers,
   inbox,
@@ -88,8 +88,11 @@ export type DirectivePart = {
  */
 export type UnitView = {
   unit: Unit;
+  /** What it owns and doesn't: its charter document as it stands. */
+  charter: string;
   person: string | null;
-  ancestors: (Pick<Unit, "id" | "name" | "summary" | "charter" | "mode"> & {
+  ancestors: (Pick<Unit, "id" | "name" | "summary" | "mode"> & {
+    charter: string;
     openDirectives: { id: number; title: string; doneWhen: string }[];
   })[];
   peers: Pick<Unit, "id" | "name" | "summary" | "parentId">[];
@@ -107,7 +110,7 @@ export type UnitView = {
   sent: Message[];
   /** Why its agent was woken now, as unit_pending says. */
   pending: string[];
-  /** What it keeps and reads first: handbook, guidelines, its own. */
+  /** What it keeps and reads first: charter, handbook, guidelines, its own. */
   docs: UnitDoc[];
 };
 
@@ -117,11 +120,12 @@ export async function unitView(
 ): Promise<UnitView> {
   const all = await listUnits(database);
   const unit = findUnit(all, id);
-  const [latest, open, tasks, waiting] = await Promise.all([
+  const [latest, open, tasks, waiting, charters] = await Promise.all([
     latestReports(database),
     listDirectives({}, database),
     listTasks({ unit: id }, database),
     inbox(id, {}, database),
+    latestDocBodies("charter", database),
   ]);
   const chain = ancestors(all, id);
   const chainIds = new Set([id, ...chain.map((u) => u.id)]);
@@ -136,12 +140,13 @@ export async function unitView(
   const own = latest.get(id) ?? null;
   return {
     unit,
+    charter: charters.get(id) ?? "",
     person: personOf(all, id),
     ancestors: chain.map((a) => ({
       id: a.id,
       name: a.name,
       summary: a.summary,
-      charter: a.charter,
+      charter: charters.get(a.id) ?? "",
       mode: a.mode,
       openDirectives: open
         .filter((d) =>

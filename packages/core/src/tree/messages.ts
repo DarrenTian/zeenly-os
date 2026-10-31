@@ -4,15 +4,26 @@
  * parent pointers to the first unit that's steered, or to a root, and waits
  * there on that unit's person. An autopilot unit it passes through gets the
  * first go: its agent settles it (deciding for the person) or passes it on.
- * Escalations move the moment they're raised or passed on (guardrail ②);
- * only the agents' reviews run on a schedule.
+ * Escalations move the moment they're raised or passed on; only the agents'
+ * reviews run on a schedule. When a person decides an escalation, the
+ * decision becomes a line in the asking unit's guidelines.
  */
 
 import { and, asc, eq, gt, inArray } from "drizzle-orm";
 
 import { db as defaultDb, type Database } from "../db";
 import { unitMessages } from "../db/schema";
-import { findUnit, listUnits, personOf, TreeError, type Unit } from "./units";
+import { type Actor, actorLabel, requireHuman } from "./actors";
+import { appendGuideline } from "./docs";
+import { Forbidden, TreeError } from "./errors";
+import { write } from "./events";
+import {
+  findUnit,
+  listUnits,
+  personOf,
+  requireActsFor,
+  type Unit,
+} from "./units";
 
 export type MessageKind = "request" | "escalation" | "note";
 export type Message = typeof unitMessages.$inferSelect;
@@ -43,11 +54,13 @@ export async function sendMessage(
     subject: string;
     body?: string;
     directive?: number | null;
-    by: string;
   },
+  by: Actor,
+  { now = new Date() }: { now?: Date } = {},
   database: Database = defaultDb(),
 ): Promise<Message> {
   const all = await listUnits(database);
+  requireActsFor(all, by, input.from, `send a ${input.kind} from it`);
   const from = findUnit(all, input.from);
   const subject = input.subject.trim();
   if (!subject) throw new TreeError("Give the message a subject");
@@ -60,21 +73,35 @@ export async function sendMessage(
     toUnit = findUnit(all, input.to).id;
     if (toUnit === from.id) throw new TreeError("A unit can't message itself");
   }
-  const [row] = await database
-    .insert(unitMessages)
-    .values({
-      kind: input.kind,
-      fromUnit: from.id,
-      toUnit,
-      path: toUnit === from.id ? [from.id] : [from.id, toUnit],
-      forPerson,
-      subject,
-      body: input.body?.trim() ?? "",
-      directiveId: input.directive ?? null,
-      sentBy: input.by,
-    })
-    .returning();
-  return row;
+  return write(
+    database,
+    by,
+    async (tx) => {
+      const [row] = await tx
+        .insert(unitMessages)
+        .values({
+          kind: input.kind,
+          fromUnit: from.id,
+          toUnit,
+          path: toUnit === from.id ? [from.id] : [from.id, toUnit],
+          forPerson,
+          subject,
+          body: input.body?.trim() ?? "",
+          directiveId: input.directive ?? null,
+          sentBy: actorLabel(by),
+          createdAt: now,
+        })
+        .returning();
+      return row;
+    },
+    (m) => ({
+      what: `message.sent`,
+      on: { kind: "message", id: m.id },
+      unit: from.id,
+      why: input.directive != null ? `directive:${input.directive}` : null,
+    }),
+    now,
+  );
 }
 
 /**
@@ -83,8 +110,12 @@ export async function sendMessage(
  */
 export async function passOnEscalation(
   input: { message: number; unit: string; note?: string },
+  by: Actor,
+  { now = new Date() }: { now?: Date } = {},
   database: Database = defaultDb(),
 ): Promise<Message> {
+  const all = await listUnits(database);
+  requireActsFor(all, by, input.unit, "pass on an escalation it holds");
   const message = await requireOpen(input.message, database);
   if (message.kind !== "escalation") {
     throw new TreeError(
@@ -101,7 +132,6 @@ export async function passOnEscalation(
       `Message ${message.id} already waits on ${message.toUnit}'s person`,
     );
   }
-  const all = await listUnits(database);
   const holder = findUnit(all, message.toUnit);
   // One step: the parent's agent gets its go too, unless it's steered.
   const parent = holder.parentId ? findUnit(all, holder.parentId) : null;
@@ -112,60 +142,61 @@ export async function passOnEscalation(
       }
     : { toUnit: holder.id, forPerson: true };
   const note = input.note?.trim();
-  const [row] = await database
-    .update(unitMessages)
-    .set({
-      toUnit: stop.toUnit,
-      forPerson: stop.forPerson,
-      path:
-        message.path.at(-1) === stop.toUnit
-          ? message.path
-          : [...message.path, stop.toUnit],
-      body: note
-        ? `${message.body}\n\n${holder.id}：${note}`.trim()
-        : message.body,
-    })
-    .where(eq(unitMessages.id, message.id))
-    .returning();
-  return row;
+  return write(
+    database,
+    by,
+    async (tx) => {
+      const [row] = await tx
+        .update(unitMessages)
+        .set({
+          toUnit: stop.toUnit,
+          forPerson: stop.forPerson,
+          path:
+            message.path.at(-1) === stop.toUnit
+              ? message.path
+              : [...message.path, stop.toUnit],
+          body: note
+            ? `${message.body}\n\n${holder.id}: ${note}`.trim()
+            : message.body,
+        })
+        .where(eq(unitMessages.id, message.id))
+        .returning();
+      return row;
+    },
+    (after) => ({
+      what: "message.passed_on",
+      on: { kind: "message", id: message.id },
+      unit: holder.id,
+      why:
+        message.directiveId != null ? `directive:${message.directiveId}` : null,
+      before: { toUnit: message.toUnit, forPerson: message.forPerson },
+      after: { toUnit: after.toUnit, forPerson: after.forPerson, note },
+    }),
+    now,
+  );
 }
 
 /**
  * Settles a message: the answer or decision goes back to its sender. One
- * waiting on a person is settled only by that person (`person`); an agent
- * settles what waits on its unit (`unit`).
+ * waiting on a person is settled by that person; one waiting on a unit's
+ * agent, by whoever acts for the unit. A person deciding an escalation also
+ * writes the decision into the sender's guidelines.
  */
 export async function resolveMessage(
-  input: {
-    message: number;
-    resolution: string;
-    decline?: boolean;
-    unit?: string;
-    person?: string;
-    by: string;
-  },
+  input: { message: number; resolution: string; decline?: boolean },
+  by: Actor,
   { now = new Date() }: { now?: Date } = {},
   database: Database = defaultDb(),
 ): Promise<Message> {
   const message = await requireOpen(input.message, database);
   const all = await listUnits(database);
-  if (input.person) {
-    if (personOf(all, message.toUnit) !== input.person) {
-      throw new TreeError(
-        `Message ${message.id} isn't waiting on ${input.person}`,
-      );
+  if (message.forPerson) {
+    const person = requireHuman(by, "settles what waits on a person");
+    if (personOf(all, message.toUnit) !== person) {
+      throw new Forbidden(`Message ${message.id} isn't waiting on ${person}`);
     }
   } else {
-    if (message.forPerson) {
-      throw new TreeError(
-        `Message ${message.id} waits on ${message.toUnit}'s person; only they settle it`,
-      );
-    }
-    if (message.toUnit !== input.unit) {
-      throw new TreeError(
-        `Message ${message.id} waits on ${message.toUnit}, not ${input.unit ?? "nobody"}`,
-      );
-    }
+    requireActsFor(all, by, message.toUnit, `settle message ${message.id}`);
   }
   if (input.decline && message.kind !== "request") {
     throw new TreeError("Only a request can be declined");
@@ -173,17 +204,47 @@ export async function resolveMessage(
   const resolution = input.resolution.trim();
   if (!resolution)
     throw new TreeError("Write the answer or decision (resolution)");
-  const [row] = await database
-    .update(unitMessages)
-    .set({
-      status: input.decline ? "declined" : "resolved",
-      resolution,
-      resolvedBy: input.by,
-      resolvedAt: now,
-    })
-    .where(eq(unitMessages.id, message.id))
-    .returning();
-  return row;
+  const learns =
+    message.kind === "escalation" && message.forPerson && !input.decline;
+  return write(
+    database,
+    by,
+    async (tx) => {
+      const [row] = await tx
+        .update(unitMessages)
+        .set({
+          status: input.decline ? "declined" : "resolved",
+          resolution,
+          resolvedBy: actorLabel(by),
+          resolvedAt: now,
+        })
+        .where(eq(unitMessages.id, message.id))
+        .returning();
+      if (learns) {
+        await appendGuideline(
+          tx,
+          {
+            unit: message.fromUnit,
+            line: `- ${day(now)} · ${message.subject} → ${resolution}`,
+            reason: `Decided escalation ${message.id}`,
+            why: `message:${message.id}`,
+          },
+          by,
+          now,
+        );
+      }
+      return row;
+    },
+    (after) => ({
+      what: input.decline ? "message.declined" : "message.resolved",
+      on: { kind: "message", id: message.id },
+      unit: message.fromUnit,
+      why:
+        message.directiveId != null ? `directive:${message.directiveId}` : null,
+      after: { status: after.status, resolution },
+    }),
+    now,
+  );
 }
 
 /** What waits on the unit, oldest first; for its agent unless `forPerson`. */
@@ -268,4 +329,8 @@ async function requireOpen(id: number, database: Database): Promise<Message> {
     throw new TreeError(`Message ${id} is settled already`);
   }
   return message;
+}
+
+function day(now: Date): string {
+  return now.toISOString().slice(0, 10);
 }

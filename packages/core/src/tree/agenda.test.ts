@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createTestDb } from "../test-db";
+import type { Actor } from "./actors";
 import { decisionDesk, pendingUnits, treeOverview, unitView } from "./agenda";
 import {
   confirmTranslation,
@@ -11,10 +12,15 @@ import { resolveMessage, sendMessage } from "./messages";
 import { submitReport } from "./reports";
 import { createUnit } from "./units";
 
+const FOUNDER: Actor = { kind: "human", id: "founder" };
+const U = (id: string): Actor => ({ kind: "unit", id });
+
 async function tree() {
   const db = await createTestDb();
   await createUnit(
     { id: "company", name: "Company", summary: "公司", charter: "全公司" },
+    FOUNDER,
+    {},
     db,
   );
   for (const [id, name] of [
@@ -30,6 +36,8 @@ async function tree() {
         summary: `${name}的事`,
         mode: "autopilot",
       },
+      FOUNDER,
+      {},
       db,
     );
   }
@@ -41,9 +49,16 @@ async function tree() {
       summary: "搜索",
       mode: "autopilot",
     },
+    FOUNDER,
+    {},
     db,
   );
-  await createUnit({ id: "elsewhere", name: "别的公司", summary: "x" }, db);
+  await createUnit(
+    { id: "elsewhere", name: "别的公司", summary: "x" },
+    FOUNDER,
+    {},
+    db,
+  );
   return db;
 }
 
@@ -61,12 +76,15 @@ describe("pendingUnits", () => {
         to: ["eng", "mkt"],
         title: "首个付费客户",
         doneWhen: "有人付钱",
-        by: "founder",
       },
+      FOUNDER,
+      {},
       db,
     );
     await sendMessage(
-      { from: "eng", kind: "request", to: "seo", subject: "x", by: "s" },
+      { from: "eng", kind: "request", to: "seo", subject: "x" },
+      U("eng"),
+      {},
       db,
     );
     expect(await pendingUnits({ now: T0 }, db)).toEqual([
@@ -82,11 +100,13 @@ describe("pendingUnits", () => {
     // Translated and confirmed: due a report; reported: asleep for a day.
     const part = await translateDirective(
       { directive: d.id, unit: "eng", translation: "上线付费" },
+      U("eng"),
       { now: T0 },
       db,
     );
     await confirmTranslation(
-      { assignment: part.id, ok: true, person: "founder" },
+      { assignment: part.id, ok: true },
+      FOUNDER,
       {},
       db,
     );
@@ -95,7 +115,8 @@ describe("pendingUnits", () => {
         ?.reasons,
     ).toEqual(["report"]);
     await submitReport(
-      { unit: "eng", status: "ok", headline: "x", by: "s" },
+      { unit: "eng", status: "ok", headline: "x" },
+      U("eng"),
       { now: T0 },
       db,
     );
@@ -111,42 +132,45 @@ describe("pendingUnits", () => {
   it("wakes a sender when its message is answered, and an active parent when a child reports", async () => {
     const db = await tree();
     const d = await issueDirective(
-      {
-        from: "company",
-        to: ["mkt"],
-        title: "x",
-        doneWhen: "y",
-        by: "founder",
-      },
+      { from: "company", to: ["mkt"], title: "x", doneWhen: "y" },
+      FOUNDER,
+      {},
       db,
     );
     const part = await translateDirective(
       { directive: d.id, unit: "mkt", translation: "z" },
+      U("mkt"),
       {},
       db,
     );
     await confirmTranslation(
-      { assignment: part.id, ok: true, person: "founder" },
+      { assignment: part.id, ok: true },
+      FOUNDER,
       {},
       db,
     );
     await submitReport(
-      { unit: "mkt", status: "ok", headline: "x", by: "s" },
+      { unit: "mkt", status: "ok", headline: "x" },
+      U("mkt"),
       { now: T0 },
       db,
     );
 
     const m = await sendMessage(
-      { from: "mkt", kind: "escalation", subject: "x", by: "s" },
+      { from: "mkt", kind: "escalation", subject: "x" },
+      U("mkt"),
+      {},
       db,
     );
     await resolveMessage(
-      { message: m.id, person: "founder", resolution: "做", by: "founder" },
+      { message: m.id, resolution: "做" },
+      FOUNDER,
       { now: hours(1) },
       db,
     );
     await submitReport(
-      { unit: "seo", status: "risk", headline: "x", by: "s" },
+      { unit: "seo", status: "risk", headline: "x" },
+      U("seo"),
       { now: hours(1) },
       db,
     );
@@ -169,12 +193,14 @@ describe("unitView", () => {
         to: ["mkt"],
         title: "首个付费客户",
         doneWhen: "有人付钱",
-        by: "founder",
       },
+      FOUNDER,
+      {},
       db,
     );
     const view = await unitView("mkt", db);
     expect(view.person).toBe("founder");
+    expect(view.charter).toBe("");
     expect(view.ancestors.map((a) => [a.id, a.charter])).toEqual([
       ["company", "全公司"],
     ]);
@@ -198,7 +224,7 @@ describe("unitView", () => {
 });
 
 describe("decisionDesk", () => {
-  it("holds what climbed to the founder and the translations they confirm", async () => {
+  it("holds what climbed to the person and the translations they confirm", async () => {
     const db = await tree();
     const d = await issueDirective(
       {
@@ -206,26 +232,34 @@ describe("decisionDesk", () => {
         to: ["eng", "mkt"],
         title: "首个付费客户",
         doneWhen: "有人付钱",
-        by: "founder",
       },
+      FOUNDER,
+      {},
       db,
     );
     await translateDirective(
       { directive: d.id, unit: "eng", translation: "上线付费" },
+      U("eng"),
       {},
       db,
     );
     const up = await sendMessage(
-      { from: "mkt", kind: "escalation", subject: "降价？", by: "s" },
+      { from: "mkt", kind: "escalation", subject: "降价？" },
+      U("mkt"),
+      {},
       db,
     );
     // Someone else's tree isn't on the founder's desk.
     await createUnit(
       { id: "acme", name: "Acme", summary: "x", owner: "someone" },
+      FOUNDER,
+      {},
       db,
     );
     await sendMessage(
-      { from: "acme", kind: "escalation", subject: "x", by: "s" },
+      { from: "acme", kind: "escalation", subject: "x" },
+      U("acme"),
+      {},
       db,
     );
 
@@ -246,7 +280,8 @@ describe("treeOverview", () => {
   it("lists each unit after its parent with its rolled-up colour", async () => {
     const db = await tree();
     await submitReport(
-      { unit: "seo", status: "stuck", headline: "x", blocked: ["y"], by: "s" },
+      { unit: "seo", status: "stuck", headline: "x", blocked: ["y"] },
+      U("seo"),
       { now: T0 },
       db,
     );
