@@ -14,18 +14,18 @@ You need Node 22, pnpm, and [Claude Code](https://code.claude.com) installed and
 
 ```bash
 pnpm install
-pnpm --filter zeenly-os cli          # the pages at http://localhost:3000, and the scheduler
+pnpm --filter zeenly-os cli          # the pages at http://localhost:3000, with the scheduler inside
 ```
 
 The first visit asks for your company's name, your name, and which roles to start with (engineering, marketing, finance; each with a charter you can edit). Then:
 
 - **Give the company a directive** from the root; the roles translate it, add their tasks and start.
-- **The scheduler** (`zeenly-os run`, also started by the command above) wakes every role that has something to do, every 10 minutes, each in its own Claude Code session with a token that acts only as that role and the tools you granted it. Nothing runs when nothing is pending.
+- **The scheduler**, inside the server, wakes every role that has something to do, every 10 minutes, each in its own Claude Code session with a token that acts only as that role and the tools you granted it. Nothing runs when nothing is pending. `zeenly-os run` makes a pass now.
 - **Answer what climbs to you**: a role's question lands on your desk; your answer goes back down and into that role's guidelines.
 
-Data lives in `~/.zeenly-os`: an embedded Postgres, and one log file per session. Settings, all optional, as environment variables: `ZEENLY_OS_PORT` (3000), `ZEENLY_OS_DATA`, `ZEENLY_OS_BUDGET_USD` per session (2), `ZEENLY_OS_MAX_TURNS` per session (40), `ZEENLY_OS_EVERY` minutes (10), `ZEENLY_OS_PASSWORD` to require a sign-in when the server is on the internet, `DATABASE_URL` to use a Postgres server instead.
+Data lives in `~/.zeenly-os`: an embedded Postgres (one process at a time, so the server owns it and the command line talks to the server), one log file per session, and `token`, the server's token for you, readable by your user only. Settings, all optional, as environment variables: `ZEENLY_OS_PORT` (3000), `ZEENLY_OS_DATA`, `ZEENLY_OS_BUDGET_USD` per session (2), `ZEENLY_OS_MAX_TURNS` per session (40), `ZEENLY_OS_EVERY` minutes (10), `ZEENLY_OS_SCHEDULER=off` to run roles only by hand, `ZEENLY_OS_PASSWORD` to require a sign-in when the server is on the internet, `DATABASE_URL` to use a Postgres server instead.
 
-Subcommands: `zeenly-os serve` (pages only), `zeenly-os run --once` (wake units once), `zeenly-os token <you>` (a token for your own Claude to act as you).
+Subcommands, on a running server: `zeenly-os run` (one scheduler pass now) and `zeenly-os token` (your token, and the `claude mcp add` line that lets your own Claude Code act as you in the tree).
 
 ## Repository layout
 

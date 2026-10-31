@@ -3,6 +3,7 @@
  * session for each, deepest first, with a token that acts only as that unit
  * and the tools its capabilities allow. Each session's full output goes to a
  * file; what it cost and how it ended goes on the unit's activity stream.
+ * Runs inside the server, which owns the database.
  */
 
 import { spawn } from "node:child_process";
@@ -14,7 +15,6 @@ import {
   issueToken,
   listCapabilities,
   listUnits,
-  migrateDb,
   pendingUnits,
   recordRun,
   revokeToken,
@@ -23,8 +23,8 @@ import {
 
 import { mcpConfig, prompt, readResult, toolFlags } from "./claude";
 
-export type RunOptions = {
-  /** Where the pages (and so the MCP server) answer. */
+export type SchedulerSettings = {
+  /** Where this server answers, for the sessions' MCP config. */
   baseUrl: string;
   /** The most one session may spend, in dollars. */
   budgetUsd: number;
@@ -32,35 +32,84 @@ export type RunOptions = {
   maxTurns: number;
   /** The `claude` command to run. */
   claude: string;
-  /** Where sessions run: the company's working directory. */
+  /** Where sessions run. */
   cwd: string;
-  log: (line: string) => void;
+  /** Minutes between passes. */
+  everyMinutes: number;
+};
+
+/** Settings from the environment, with their defaults. */
+export function settings(): SchedulerSettings {
+  const port = Number(process.env.ZEENLY_OS_PORT ?? process.env.PORT ?? 3000);
+  return {
+    baseUrl: process.env.ZEENLY_OS_URL ?? `http://localhost:${port}`,
+    budgetUsd: Number(process.env.ZEENLY_OS_BUDGET_USD ?? 2),
+    maxTurns: Number(process.env.ZEENLY_OS_MAX_TURNS ?? 40),
+    claude: process.env.ZEENLY_OS_CLAUDE ?? "claude",
+    cwd: process.env.ZEENLY_OS_CWD ?? process.cwd(),
+    everyMinutes: Number(process.env.ZEENLY_OS_EVERY ?? 10),
+  };
+}
+
+export type PassResult = {
+  ran: { unit: string; reasons: string[] }[];
+  /** A pass was already under way, so this one did nothing. */
+  busy: boolean;
 };
 
 const TOKEN_TTL_MS = 3 * 60 * 60 * 1000;
 
-/** One pass: every unit with work runs once. Returns how many ran. */
-export async function runOnce(options: RunOptions): Promise<number> {
-  await migrateDb();
-  const pending = await pendingUnits();
-  if (!pending.length) {
-    options.log("Nothing pending.");
-    return 0;
+let passing = false;
+
+/** One pass: every unit with work runs once. Never two passes at a time. */
+export async function runPass(
+  options: SchedulerSettings = settings(),
+  log: (line: string) => void = defaultLog,
+): Promise<PassResult> {
+  if (passing) return { ran: [], busy: true };
+  passing = true;
+  try {
+    const pending = await pendingUnits();
+    if (!pending.length) {
+      log("Nothing pending.");
+      return { ran: [], busy: false };
+    }
+    const names = new Map((await listUnits()).map((u) => [u.id, u.name]));
+    for (const p of pending) {
+      log(
+        `${names.get(p.unit) ?? p.unit} (${p.unit}): ${p.reasons.join("; ")}`,
+      );
+      await runUnit(p.unit, options, log);
+    }
+    return { ran: pending, busy: false };
+  } finally {
+    passing = false;
   }
-  const names = new Map((await listUnits()).map((u) => [u.id, u.name]));
-  for (const p of pending) {
-    options.log(
-      `${names.get(p.unit) ?? p.unit} (${p.unit}): ${p.reasons.join("; ")}`,
+}
+
+let loop: NodeJS.Timeout | undefined;
+
+/** Passes now and every `everyMinutes`, until the process ends. */
+export function startLoop(
+  options: SchedulerSettings = settings(),
+  log: (line: string) => void = defaultLog,
+): void {
+  if (loop) return;
+  const tick = () => {
+    runPass(options, log).catch((err) =>
+      log(`error: ${err instanceof Error ? err.message : String(err)}`),
     );
-    await runUnit(p.unit, options);
-  }
-  return pending.length;
+  };
+  tick();
+  loop = setInterval(tick, options.everyMinutes * 60_000);
+  loop.unref();
 }
 
 /** Wakes one unit's agent in a session of its own. */
 export async function runUnit(
   unit: string,
-  options: RunOptions,
+  options: SchedulerSettings,
+  log: (line: string) => void = defaultLog,
 ): Promise<void> {
   const now = new Date();
   const stamp = now.toISOString().replace(/[:.]/g, "-");
@@ -151,7 +200,11 @@ export async function runUnit(
     },
     SCHEDULER,
   );
-  options.log(
+  log(
     `  ${outcome}${result?.costUsd != null ? ` · $${result.costUsd.toFixed(2)}` : ""}${result?.turns != null ? ` · ${result.turns} turns` : ""}${detail ? ` · ${detail}` : ""} · ${logPath}`,
   );
+}
+
+function defaultLog(line: string): void {
+  console.log(`[scheduler ${new Date().toISOString()}] ${line}`);
 }

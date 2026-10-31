@@ -80,15 +80,16 @@ export default async function HomePage() {
       <section className="rounded-xl border border-line bg-surface-2 px-4 py-4 text-sm">
         <h2 className="font-medium">Run the roles</h2>
         <p className="mt-1 text-muted">
-          In a terminal, with Claude Code installed and signed in:
+          With Claude Code installed and signed in on this machine:
         </p>
         <pre className="mt-2 overflow-x-auto rounded-lg bg-background px-3 py-2 font-mono text-xs">
           zeenly-os run
         </pre>
         <p className="mt-2 text-muted">
-          It wakes each role that has something to do, in its own session, with
-          a token that acts only as that role and the tools you granted it.
-          Data:{" "}
+          The scheduler in this server does that on its own every few minutes;
+          the command runs a pass now. Each role that has something to do gets
+          its own session, with a token that acts only as that role and the
+          tools you granted it. Data:{" "}
           {database.kind === "embedded"
             ? "embedded database at"
             : "Postgres at"}{" "}

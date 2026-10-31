@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { listUnits, TreeError } from "@zeenly-os/core";
 
 import { requireSignIn } from "@/lib/auth";
+import { ensureLocalToken } from "@/lib/local-token";
 import { createCompany } from "@/lib/template";
 
 export type SetupState = { error?: string };
@@ -27,6 +28,8 @@ export async function setupAction(
   }
   try {
     await createCompany({ company, person, roles });
+    // The command line can reach this server from now on.
+    await ensureLocalToken();
   } catch (err) {
     if (err instanceof TreeError) return { error: err.message };
     throw err;
