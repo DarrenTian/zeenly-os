@@ -1,15 +1,22 @@
 /**
  * The function tree's agent interface: an MCP server (streamable HTTP,
- * stateless, JSON replies) served at /api/mcp. Units' agents and any
- * session read and write the tree only through these tools; the pages a
- * person uses call the same core functions.
+ * stateless, JSON replies) served at /api/mcp. Units' agents and people's
+ * own tools read and write the tree only through these; the pages a person
+ * uses call the same core functions. Who is calling comes from the token the
+ * app resolved, passed in as `actor`; a tool's `unit` or `from` says which
+ * unit the call is about, and core refuses what the actor may not do.
  */
 
 import { z } from "zod";
 
 import { db as defaultDb, type Database } from "../db";
+import type { Actor } from "./actors";
 import { pendingUnits, treeOverview, unitView } from "./agenda";
-import { getUnitDoc, saveUnitDoc } from "./docs";
+import {
+  grantCapability,
+  listCapabilities,
+  revokeCapability,
+} from "./capabilities";
 import {
   closeDirective,
   directiveChain,
@@ -17,6 +24,9 @@ import {
   issueDirective,
   translateDirective,
 } from "./directives";
+import { getUnitDoc, listUnitDocs, saveUnitDoc } from "./docs";
+import { Forbidden, TreeError } from "./errors";
+import { listEvents } from "./events";
 import {
   inbox,
   passOnEscalation,
@@ -25,27 +35,27 @@ import {
 } from "./messages";
 import { listReports, submitReport } from "./reports";
 import { addTask, claimTask, listTasks, updateTask } from "./tasks";
-import { createUnit, deleteUnit, TreeError, updateUnit } from "./units";
+import { createUnit, deleteUnit, updateUnit } from "./units";
 
 /** How a unit's agent works, sent to every client on connect. */
-export const UNIT_PROTOCOL = `You act for units of a function tree: standing roles, each with a charter, a person who steers it, and a mode.
+export const UNIT_PROTOCOL = `You are the agent of one unit in a function tree: a standing role with a charter (what it owns), a person who steers it, and a mode (steer or autopilot). Your token names your unit; you act as it and nothing else.
 
-Run: call unit_pending; for each unit it lists (deepest first), call unit_get and act as that unit, within its charter, then go on to the next. Then call unit_pending again: what you did may have woken other units (a request, an escalation, a report). Repeat until it's empty, at most 12 units in all. Nothing pending: stop.
+Start with unit_get on your unit. Read its charter, handbook (how your role works, what went wrong before) and guidelines (what your person decided when they overruled you; follow them before deciding anything they cover). unit_get's pending says why you were woken.
 
-As a unit:
-- Translate each new directive (directive_translate) into your own goal for it, in your charter's terms, with how you'll know you've done your part; or say it isn't yours (relevant: false, with why). Then add the tasks it takes (task_add, linked to the directive). A translation of a root's directive by one of its own children waits for the root's person to confirm (needsConfirm, state proposed); add its tasks anyway, and if it's sent back (state new, with a note) the note is your person's correction: translate again and fix the tasks to match.
+Then, within your charter:
+- Translate each new directive (directive_translate) into your own goal for it, with how you'll know you've done your part, or say it isn't yours (relevant: false, with why). Add the tasks it takes (task_add, linked to the directive). A translation that came back with a note was corrected by your person: translate again and fix the tasks to match.
 - Pass a directive on to your children (directive_issue with parentId) when parts of it are theirs.
-- Answer every message waiting on you (message_resolve). A request from a peer you may decline, with why. An escalation from below: settle it if it falls within your charter and is reversible (your decision stands for your person), else message_pass_on with your note.
-- Can't settle something (it reaches past your charter, or your steered person must decide, or it's irreversible): message_send kind escalation, saying what you need decided, the options and what you'd pick. It goes up to the first person who can decide.
-- Need a peer to act: message_send kind request.
-- Report (report_submit) when unit_pending says so: fixed fields, short. Carry bad news up whole; good news in a line. A unit whose children have reported cites, in every sentence, the report ids from below it rests on; never claim what no report says.
+- Answer every message waiting on you (message_resolve). A request from a peer you may decline, with why. An escalation from below you settle if it falls within your charter and is reversible (your decision stands for your person), else message_pass_on with your note.
+- Can't settle something (it reaches past your charter, your person must decide, or it's irreversible): message_send kind escalation, saying what you need decided, the options and what you'd pick. It climbs to the first person who can decide. Need a peer to act: kind request.
+- Work your tasks (task_claim, then task_update as they move). What you make outside the tree (code, a PR, a document) you link on the task.
+- Report (report_submit) when pending says so: fixed fields, short. Carry bad news up whole; good news in a line. Once your children have reported, every sentence cites their report ids; never claim what no report says.
 - Steered unit: do reversible things first and report them; wait for your person on irreversible ones (money, customers, anything published, deleting data).
-- Code, documents and PRs: add a task with enough detail for any session to finish it; don't do it yourself in this run.
+- When your work changes what your handbook should say, save it (doc_save). Your charter and guidelines are your person's to write.
 - Answers to what you sent show in unit_get's answers until your next report; reporting clears them.
-- Your documents (unit_get's docs) are your memory: handbook is how your role does its work, including what went wrong before; guidelines are what your person decided when they overruled you, one line each, and you follow them. Read them with doc_get before deciding anything they might cover; when your work changes what one should say, save it with doc_save. Your charter (what you own) is your person's to change, not yours.
-- Pass your session's name where a tool asks for it: "by", or "source" on task_add.`;
 
-type Ctx = { database: Database; now: Date };
+When nothing in pending is left, stop.`;
+
+type Ctx = { database: Database; now: Date; actor: Actor };
 
 type Tool = {
   name: string;
@@ -54,7 +64,6 @@ type Tool = {
   run: (args: never, ctx: Ctx) => Promise<unknown>;
 };
 
-const by = z.string().min(1).describe("Your session's name or link");
 const unit = z.string().describe("The unit's id");
 const line = z.union([
   z.string(),
@@ -74,6 +83,15 @@ function tool<S extends z.ZodObject>(
   run: (args: z.infer<S>, ctx: Ctx) => Promise<unknown>,
 ): Tool {
   return { name, description, input, run: run as Tool["run"] };
+}
+
+/** A unit's agent reads only its own unit; people and the system read any. */
+function readable(actor: Actor, id: string): void {
+  if (actor.kind === "unit" && actor.id !== id) {
+    throw new Forbidden(
+      `unit:${actor.id} reads its own unit; ${id} shows it only what unit_get's view includes`,
+    );
+  }
 }
 
 export const TREE_TOOLS: Tool[] = [
@@ -103,13 +121,16 @@ export const TREE_TOOLS: Tool[] = [
   ),
   tool(
     "unit_get",
-    "Everything a unit's agent works from: its charter, its view of the tree, its directives, tasks, inbox, answers to what it sent, and its children's latest reports (to cite).",
+    "Everything a unit's agent works from: its charter and documents, its view of the tree, its directives, tasks, inbox, answers to what it sent, its children's latest reports (to cite), and why it was woken.",
     z.object({ unit }),
-    ({ unit }, { database }) => unitView(unit, database),
+    ({ unit }, { database, actor }) => {
+      readable(actor, unit);
+      return unitView(unit, database);
+    },
   ),
   tool(
     "unit_create",
-    "Adds a unit under a parent (or a new root).",
+    "A person adds a unit under one they steer, or a new root. The charter becomes its first document.",
     z.object({
       id: z.string().describe("A slug: lower-case letters, digits, dashes"),
       parentId: z.string().nullable().optional(),
@@ -121,16 +142,17 @@ export const TREE_TOOLS: Tool[] = [
         .describe("Markdown: what it owns and doesn't"),
       mode: z.enum(["steer", "autopilot"]).optional(),
     }),
-    (args, { database }) => createUnit(args, database),
+    (args, { database, now, actor }) =>
+      createUnit(args, actor, { now }, database),
   ),
   tool(
     "unit_update",
-    "Changes a unit's name, summary, charter, parent or place among its siblings.",
+    "The unit's person changes its name, summary, mode, parent or place among its siblings.",
     z.object({
       unit,
       name: z.string().optional(),
       summary: z.string().optional(),
-      charter: z.string().optional(),
+      mode: z.enum(["steer", "autopilot"]).optional(),
       parentId: z.string().nullable().optional(),
       position: z
         .number()
@@ -138,27 +160,54 @@ export const TREE_TOOLS: Tool[] = [
         .optional()
         .describe("Its place among its siblings, smallest first"),
     }),
-    ({ unit, ...patch }, { database, now }) =>
-      updateUnit(unit, patch, { now }, database),
+    ({ unit, ...patch }, { database, now, actor }) =>
+      updateUnit(unit, patch, actor, { now }, database),
   ),
   tool(
     "unit_delete",
-    "Removes a unit nothing hangs off yet (no units below it, no history).",
+    "The unit's person removes it, if nothing hangs off it yet (no units below, no history).",
     z.object({ unit }),
-    async ({ unit }, { database }) => {
-      await deleteUnit(unit, database);
+    async ({ unit }, { database, now, actor }) => {
+      await deleteUnit(unit, actor, { now }, database);
       return { deleted: unit };
     },
   ),
   tool(
+    "unit_events",
+    "A unit's activity, newest first: every change about it, who made it, and what it served.",
+    z.object({
+      unit,
+      limit: z.number().int().min(1).max(200).optional(),
+      before: z
+        .number()
+        .int()
+        .optional()
+        .describe("Page back from this event id"),
+    }),
+    ({ unit, limit, before }, { database, actor }) => {
+      readable(actor, unit);
+      return listEvents({ unit, limit, before }, database);
+    },
+  ),
+  tool(
+    "doc_list",
+    "A unit's documents at their latest versions: charter, handbook, guidelines, and any of its own.",
+    z.object({ unit }),
+    ({ unit }, { database, actor }) => {
+      readable(actor, unit);
+      return listUnitDocs(unit, database);
+    },
+  ),
+  tool(
     "doc_get",
-    "One of a unit's documents (unit_get lists them): its body, version, author and reason. handbook and guidelines carry meaning; a unit may keep others.",
+    "One of a unit's documents: its body, version, author and reason; or an older version.",
     z.object({
       unit,
       name: z.string(),
       version: z.number().int().optional(),
     }),
-    async (args, { database }) => {
+    async (args, { database, actor }) => {
+      readable(actor, args.unit);
       const found = await getUnitDoc(args, database);
       if (!found) throw new TreeError(`${args.unit} has no ${args.name}`);
       return found;
@@ -166,17 +215,20 @@ export const TREE_TOOLS: Tool[] = [
   ),
   tool(
     "doc_save",
-    "Saves a document's next version. baseVersion is the version you changed (0 for a new one); if someone saved since, read it again and redo your change.",
+    "Saves a document's next version. baseVersion is the version you changed (0 for a new one); if someone saved since, read it again and redo your change. The charter and guidelines are the unit's person's to save.",
     z.object({
       unit,
-      name: z.string().describe("handbook, guidelines, or a slug of your own"),
+      name: z
+        .string()
+        .describe(
+          "handbook, or a slug of your own; charter and guidelines for its person",
+        ),
       body: z.string().describe("The whole document, as Markdown"),
       baseVersion: z.number().int(),
       reason: z.string().describe("Why it changed, in a sentence"),
-      by,
     }),
-    ({ by, ...args }, { database }) =>
-      saveUnitDoc({ ...args, author: by }, database),
+    (args, { database, now, actor }) =>
+      saveUnitDoc(args, actor, { now }, database),
   ),
   tool(
     "directive_issue",
@@ -189,9 +241,9 @@ export const TREE_TOOLS: Tool[] = [
       doneWhen: z.string().describe("How the issuer will tell it's met"),
       dueOn: z.string().optional().describe("YYYY-MM-DD"),
       parentId: z.number().int().optional(),
-      by,
     }),
-    (args, { database }) => issueDirective(args, database),
+    (args, { database, now, actor }) =>
+      issueDirective(args, actor, { now }, database),
   ),
   tool(
     "directive_translate",
@@ -203,7 +255,8 @@ export const TREE_TOOLS: Tool[] = [
       relevant: z.boolean().optional(),
       reason: z.string().optional(),
     }),
-    (args, { database, now }) => translateDirective(args, { now }, database),
+    (args, { database, now, actor }) =>
+      translateDirective(args, actor, { now }, database),
   ),
   tool(
     "directive_get",
@@ -228,22 +281,26 @@ export const TREE_TOOLS: Tool[] = [
       status: z.enum(["done", "dropped"]),
       outcome: z.string(),
     }),
-    (args, { database, now }) => closeDirective(args, { now }, database),
+    (args, { database, now, actor }) =>
+      closeDirective(args, actor, { now }, database),
   ),
   tool(
     "task_list",
-    "A unit's tasks (all units without one), most urgent first; open and doing unless statuses.",
+    "A unit's tasks, most urgent first; open and doing unless statuses. Without a unit, everyone's (people and the system).",
     z.object({
       unit: unit.optional(),
       statuses: z
         .array(z.enum(["open", "doing", "done", "dropped"]))
         .optional(),
     }),
-    (args, { database }) => listTasks(args, database),
+    (args, { database, actor }) => {
+      if (actor.kind === "unit") readable(actor, args.unit ?? "");
+      return listTasks(args, database);
+    },
   ),
   tool(
     "task_add",
-    "Adds a task to a unit: enough detail that any session can finish it. priority 0 (most urgent) to 3.",
+    "Adds a task to a unit: enough detail that a fresh session can finish it. priority 0 (most urgent) to 3. A person's task is pinned: its agent leaves the priority alone.",
     z.object({
       unit,
       title: z.string(),
@@ -254,15 +311,15 @@ export const TREE_TOOLS: Tool[] = [
         .int()
         .optional()
         .describe("The directive it serves"),
-      source: by,
     }),
-    (args, { database }) => addTask(args, database),
+    (args, { database, now, actor }) => addTask(args, actor, { now }, database),
   ),
   tool(
     "task_claim",
-    "A session takes an open task to work on.",
-    z.object({ task: z.number().int(), by }),
-    (args, { database, now }) => claimTask(args, { now }, database),
+    "Takes an open task of your unit to work on.",
+    z.object({ task: z.number().int() }),
+    (args, { database, now, actor }) =>
+      claimTask(args, actor, { now }, database),
   ),
   tool(
     "task_update",
@@ -275,7 +332,8 @@ export const TREE_TOOLS: Tool[] = [
       priority: z.number().int().optional(),
       prUrl: z.string().optional(),
     }),
-    (args, { database, now }) => updateTask(args, { now }, database),
+    (args, { database, now, actor }) =>
+      updateTask(args, actor, { now }, database),
   ),
   tool(
     "message_send",
@@ -292,33 +350,36 @@ export const TREE_TOOLS: Tool[] = [
           "For an escalation: what to decide, the options, what you'd pick",
         ),
       directive: z.number().int().optional(),
-      by,
     }),
-    (args, { database }) => sendMessage(args, database),
+    (args, { database, now, actor }) =>
+      sendMessage(args, actor, { now }, database),
   ),
   tool(
     "message_inbox",
     "What waits on a unit's agent.",
     z.object({ unit }),
-    ({ unit }, { database }) => inbox(unit, { forPerson: false }, database),
+    ({ unit }, { database, actor }) => {
+      readable(actor, unit);
+      return inbox(unit, { forPerson: false }, database);
+    },
   ),
   tool(
     "message_resolve",
-    "The unit a message waits on answers it (decline: true refuses a request). Messages waiting on a person are theirs to settle.",
+    "Settles a message waiting on you (decline: true refuses a request). What waits on a person, only that person settles; their decision on an escalation joins the sender's guidelines.",
     z.object({
       message: z.number().int(),
-      unit,
       resolution: z.string(),
       decline: z.boolean().optional(),
-      by,
     }),
-    (args, { database, now }) => resolveMessage(args, { now }, database),
+    (args, { database, now, actor }) =>
+      resolveMessage(args, actor, { now }, database),
   ),
   tool(
     "message_pass_on",
     "The autopilot unit holding an escalation can't settle it: it moves one step up, with your note.",
     z.object({ message: z.number().int(), unit, note: z.string().optional() }),
-    (args, { database }) => passOnEscalation(args, database),
+    (args, { database, now, actor }) =>
+      passOnEscalation(args, actor, { now }, database),
   ),
   tool(
     "report_submit",
@@ -340,9 +401,42 @@ export const TREE_TOOLS: Tool[] = [
           }),
         )
         .optional(),
-      by,
     }),
-    (args, { database, now }) => submitReport(args, { now }, database),
+    (args, { database, now, actor }) =>
+      submitReport(args, actor, { now }, database),
+  ),
+  tool(
+    "capability_list",
+    "The tools a unit may use, with scope and approval level. The command running its agent connects only these.",
+    z.object({ unit }),
+    ({ unit }, { database, actor }) => {
+      readable(actor, unit);
+      return listCapabilities(unit, database);
+    },
+  ),
+  tool(
+    "capability_grant",
+    "The person steering a unit's parent gives it a tool (a root's own person, for a root), within what the parent has. level: who approves its use, root, parent or self.",
+    z.object({
+      unit,
+      tool: z
+        .string()
+        .describe("shell, files, github, web, or an MCP server's name"),
+      scope: z
+        .string()
+        .optional()
+        .describe("A repository, path or domain; empty is everything"),
+      level: z.enum(["root", "parent", "self"]).optional(),
+    }),
+    (args, { database, now, actor }) =>
+      grantCapability(args, actor, { now }, database),
+  ),
+  tool(
+    "capability_revoke",
+    "Takes a tool from a unit and from every unit below it that held it within that scope.",
+    z.object({ unit, tool: z.string(), scope: z.string().optional() }),
+    (args, { database, now, actor }) =>
+      revokeCapability(args, actor, { now }, database),
   ),
 ];
 
@@ -356,16 +450,17 @@ type RpcRequest = {
 };
 
 /**
- * Answers one JSON-RPC message; null for a notification, which gets no
- * reply. Tool failures the caller can fix come back as tool errors with the
- * reason, so the agent can read it and try again.
+ * Answers one JSON-RPC message for `actor`; null for a notification, which
+ * gets no reply. Tool failures the caller can fix come back as tool errors
+ * with the reason, so the agent can read it and try again.
  */
 export async function handleMcp(
   message: unknown,
   {
+    actor,
     database = defaultDb(),
     now = new Date(),
-  }: { database?: Database; now?: Date } = {},
+  }: { actor: Actor; database?: Database; now?: Date },
 ): Promise<Record<string, unknown> | null> {
   const req = (message ?? {}) as RpcRequest;
   if (req.id === undefined || req.id === null) return null;
@@ -405,7 +500,11 @@ export async function handleMcp(
         return reply(toolError(z.prettifyError(args.error)));
       }
       try {
-        const result = await found.run(args.data as never, { database, now });
+        const result = await found.run(args.data as never, {
+          database,
+          now,
+          actor,
+        });
         return reply({
           content: [
             { type: "text", text: JSON.stringify(result ?? null, null, 1) },

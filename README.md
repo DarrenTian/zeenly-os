@@ -6,7 +6,7 @@ A company is a tree of **roles** (units). Each role has a charter, a person who 
 
 You see the company and its roles, never a pile of sessions.
 
-**Status: early.** This repository holds the kernel only: the tree, directives, messages, reports, tasks, documents, and the MCP server agents use. The pages, the `zeenly run` command and a starter company come next. Not ready to use yet.
+**Status: early.** This repository holds the kernel only: the tree, directives, messages, reports, tasks, documents, capabilities, the event log, tokens, and the MCP server agents use. The pages, the `zeenly run` command and a starter company come next. Not ready to use yet.
 
 ## Repository layout
 
@@ -31,10 +31,16 @@ pnpm db:generate            # after editing packages/core/src/db/schema.ts
 ## The tree, in one pass
 
 1. A person issues a directive from a root unit (`directive_issue`).
-2. Each unit it reaches translates it into its own goal (`directive_translate`) and adds the tasks it takes (`task_add`). A root's direct children wait for the root's person to confirm their translation.
-3. Units work, claim tasks, and send each other requests (`message_send`). What a unit can't settle it escalates; the escalation climbs to the first unit a person steers.
+2. Each unit it reaches translates it into its own goal (`directive_translate`) and adds the tasks it takes (`task_add`). A root's direct children wait for the root's person to confirm their translation; a translation sent back with a note becomes a line in the unit's guidelines.
+3. Units work their tasks, and send each other requests (`message_send`). What a unit can't settle it escalates; the escalation climbs to the first unit a person steers.
 4. Units report (`report_submit`): status, a headline, done, blocked, next, numbers. A unit whose children have reported cites their report ids in every sentence.
-5. The person answers what climbed to them; the answer goes back down, and lands in the unit's guidelines.
+5. The person answers what climbed to them; the answer goes back down, and lands in the asking unit's guidelines.
+
+## Who may do what
+
+Every call carries an **actor**: a unit's agent (`unit:eng`), a person (`human:founder`) or the system (`system:scheduler`). Which one is settled by the bearer token the call came with, never by a parameter. A unit's agent acts as its own unit and reads only its own view; a person acts as any unit they steer, and does what only people do: shape the tree, write a charter or guidelines, confirm a translation, decide an escalation, grant **capabilities** (the tools a unit may use, each a subset of its parent's).
+
+Every change goes through one write entry point, which records an **event** in the same transaction: who, what, on which thing, serving which directive. A unit's activity stream (`unit_events`) is that log.
 
 `UNIT_PROTOCOL` in `packages/core/src/tree/mcp.ts` is the text every agent gets on connecting, and the full list of tools is `TREE_TOOLS`.
 

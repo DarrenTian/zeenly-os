@@ -8,6 +8,13 @@
       "when": 1793486442583,
       "tag": "0000_tree",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1793488686132,
+      "tag": "0001_actors_events_capabilities",
+      "breakpoints": true
     }
   ]
 }

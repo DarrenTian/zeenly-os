@@ -11,7 +11,17 @@ import { and, asc, desc, eq, inArray } from "drizzle-orm";
 
 import { db as defaultDb, type Database } from "../db";
 import { directiveAssignments, directives, unitTasks } from "../db/schema";
-import { descendants, findUnit, listUnits, personOf, TreeError } from "./units";
+import { type Actor, actorLabel, requireHuman } from "./actors";
+import { appendGuideline } from "./docs";
+import { Forbidden, TreeError } from "./errors";
+import { write } from "./events";
+import {
+  descendants,
+  findUnit,
+  listUnits,
+  personOf,
+  requireActsFor,
+} from "./units";
 
 export type DirectiveStatus = "open" | "done" | "dropped";
 export type AssignmentState =
@@ -50,8 +60,8 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 /**
  * Sends a directive from one unit to others. A unit passing on a directive
  * it received names it as `parentId`. Translations of a root's directive
- * by its own children wait on the root's person to confirm (guardrail ④:
- * the first layer's reading of a goal is where alignment is thinnest).
+ * by its own children wait on the root's person to confirm: the first
+ * layer's reading of a goal is where alignment is thinnest.
  */
 export async function issueDirective(
   input: {
@@ -62,11 +72,13 @@ export async function issueDirective(
     doneWhen: string;
     dueOn?: string | null;
     parentId?: number | null;
-    by: string;
   },
+  by: Actor,
+  { now = new Date() }: { now?: Date } = {},
   database: Database = defaultDb(),
 ): Promise<Directive> {
   const all = await listUnits(database);
+  requireActsFor(all, by, input.from, "issue a directive from it");
   const from = findUnit(all, input.from);
   const to = [...new Set(input.to)];
   if (!to.length)
@@ -98,31 +110,46 @@ export async function issueDirective(
   }
 
   const below = new Set(descendants(all, from.id).map((u) => u.id));
-  return database.transaction(async (tx) => {
-    const [row] = await tx
-      .insert(directives)
-      .values({
-        fromUnit: from.id,
-        parentId: input.parentId ?? null,
-        title,
-        body: input.body?.trim() ?? "",
-        doneWhen,
-        dueOn: input.dueOn || null,
-        createdBy: input.by,
-      })
-      .returning();
-    await tx.insert(directiveAssignments).values(
-      to.map((unitId) => ({
-        directiveId: row.id,
-        unitId,
-        kind: below.has(unitId) ? ("directive" as const) : ("request" as const),
-        needsConfirm:
-          from.parentId === null &&
-          all.find((u) => u.id === unitId)?.parentId === from.id,
-      })),
-    );
-    return (await getDirective(row.id, tx))!;
-  });
+  return write(
+    database,
+    by,
+    async (tx) => {
+      const [row] = await tx
+        .insert(directives)
+        .values({
+          fromUnit: from.id,
+          parentId: input.parentId ?? null,
+          title,
+          body: input.body?.trim() ?? "",
+          doneWhen,
+          dueOn: input.dueOn || null,
+          createdBy: actorLabel(by),
+          createdAt: now,
+        })
+        .returning();
+      await tx.insert(directiveAssignments).values(
+        to.map((unitId) => ({
+          directiveId: row.id,
+          unitId,
+          kind: below.has(unitId)
+            ? ("directive" as const)
+            : ("request" as const),
+          needsConfirm:
+            from.parentId === null &&
+            all.find((u) => u.id === unitId)?.parentId === from.id,
+          updatedAt: now,
+        })),
+      );
+      return (await getDirective(row.id, tx))!;
+    },
+    (d) => ({
+      what: "directive.issued",
+      on: { kind: "directive", id: d.id },
+      unit: from.id,
+      why: input.parentId != null ? `directive:${input.parentId}` : null,
+    }),
+    now,
+  );
 }
 
 /**
@@ -138,9 +165,12 @@ export async function translateDirective(
     relevant?: boolean;
     reason?: string;
   },
+  by: Actor,
   { now = new Date() }: { now?: Date } = {},
   database: Database = defaultDb(),
 ): Promise<Assignment> {
+  const all = await listUnits(database);
+  requireActsFor(all, by, input.unit, "translate its directive");
   const { directive, assignment } = await assignmentOf(
     input.directive,
     input.unit,
@@ -156,32 +186,54 @@ export async function translateDirective(
   if (!relevant && !input.reason?.trim()) {
     throw new TreeError("Say why the directive isn't yours (reason)");
   }
-  const [row] = await database
-    .update(directiveAssignments)
-    .set(
-      relevant
-        ? {
-            translation: input.translation!.trim(),
-            state: assignment.needsConfirm ? "proposed" : "active",
-            note: null,
-            updatedAt: now,
-          }
-        : { state: "declined", note: input.reason!.trim(), updatedAt: now },
-    )
-    .where(eq(directiveAssignments.id, assignment.id))
-    .returning();
-  return row;
+  return write(
+    database,
+    by,
+    async (tx) => {
+      const [row] = await tx
+        .update(directiveAssignments)
+        .set(
+          relevant
+            ? {
+                translation: input.translation!.trim(),
+                state: assignment.needsConfirm ? "proposed" : "active",
+                note: null,
+                updatedAt: now,
+              }
+            : {
+                state: "declined",
+                note: input.reason!.trim(),
+                updatedAt: now,
+              },
+        )
+        .where(eq(directiveAssignments.id, assignment.id))
+        .returning();
+      return row;
+    },
+    (after) => ({
+      what: relevant ? "directive.translated" : "directive.declined",
+      on: { kind: "assignment", id: assignment.id },
+      unit: input.unit,
+      why: `directive:${directive.id}`,
+      before: assignment,
+      after,
+    }),
+    now,
+  );
 }
 
 /**
  * The issuer's person confirms a proposed translation, or sends it back
- * with a note for the unit to translate again.
+ * with a note for the unit to translate again. A send-back is a correction,
+ * so the note also becomes a line in the unit's guidelines.
  */
 export async function confirmTranslation(
-  input: { assignment: number; ok: boolean; note?: string; person: string },
+  input: { assignment: number; ok: boolean; note?: string },
+  by: Actor,
   { now = new Date() }: { now?: Date } = {},
   database: Database = defaultDb(),
 ): Promise<Assignment> {
+  const person = requireHuman(by, "confirms a translation");
   const [assignment] = await database
     .select()
     .from(directiveAssignments)
@@ -192,24 +244,53 @@ export async function confirmTranslation(
   }
   const directive = (await getDirective(assignment.directiveId, database))!;
   const all = await listUnits(database);
-  if (personOf(all, directive.fromUnit) !== input.person) {
-    throw new TreeError(
+  if (personOf(all, directive.fromUnit) !== person) {
+    throw new Forbidden(
       `Only ${directive.fromUnit}'s person confirms its directives' translations`,
     );
   }
-  if (!input.ok && !input.note?.trim()) {
+  const note = input.note?.trim();
+  if (!input.ok && !note) {
     throw new TreeError("Say what to change when sending a translation back");
   }
-  const [row] = await database
-    .update(directiveAssignments)
-    .set(
-      input.ok
-        ? { state: "active", note: input.note?.trim() || null, updatedAt: now }
-        : { state: "new", note: input.note!.trim(), updatedAt: now },
-    )
-    .where(eq(directiveAssignments.id, assignment.id))
-    .returning();
-  return row;
+  return write(
+    database,
+    by,
+    async (tx) => {
+      const [row] = await tx
+        .update(directiveAssignments)
+        .set(
+          input.ok
+            ? { state: "active", note: note || null, updatedAt: now }
+            : { state: "new", note: note!, updatedAt: now },
+        )
+        .where(eq(directiveAssignments.id, assignment.id))
+        .returning();
+      if (!input.ok) {
+        await appendGuideline(
+          tx,
+          {
+            unit: assignment.unitId,
+            line: `- ${day(now)} · directive ${directive.id} "${directive.title}": translation sent back: ${note}`,
+            reason: `Translation of directive ${directive.id} sent back`,
+            why: `directive:${directive.id}`,
+          },
+          by,
+          now,
+        );
+      }
+      return row;
+    },
+    (after) => ({
+      what: input.ok ? "directive.confirmed" : "directive.sent_back",
+      on: { kind: "assignment", id: assignment.id },
+      unit: assignment.unitId,
+      why: `directive:${directive.id}`,
+      before: assignment,
+      after,
+    }),
+    now,
+  );
 }
 
 /**
@@ -224,9 +305,12 @@ export async function closeDirective(
     status: "done" | "dropped";
     outcome: string;
   },
+  by: Actor,
   { now = new Date() }: { now?: Date } = {},
   database: Database = defaultDb(),
 ): Promise<Directive> {
+  const all = await listUnits(database);
+  requireActsFor(all, by, input.unit, "close its directive");
   const directive = await getDirective(input.directive, database);
   if (!directive) throw new TreeError(`No directive ${input.directive}`);
   if (directive.fromUnit !== input.unit) {
@@ -237,42 +321,62 @@ export async function closeDirective(
   if (directive.status !== "open") {
     throw new TreeError(`Directive ${directive.id} is closed already`);
   }
-  if (!input.outcome.trim()) throw new TreeError("Say how it ended (outcome)");
-  await database.transaction(async (tx) => {
-    const close = async (id: number, outcome: string) => {
-      await tx
-        .update(directives)
-        .set({ status: input.status, outcome, closedAt: now })
-        .where(eq(directives.id, id));
-      await tx
-        .update(directiveAssignments)
-        .set({ state: "closed", updatedAt: now })
-        .where(
-          and(
-            eq(directiveAssignments.directiveId, id),
-            inArray(directiveAssignments.state, ["new", "proposed", "active"]),
-          ),
-        );
-      await tx
-        .update(unitTasks)
-        .set({ status: "dropped", updatedAt: now })
-        .where(
-          and(eq(unitTasks.directiveId, id), eq(unitTasks.status, "open")),
-        );
-      const passedOn = await tx
-        .select({ id: directives.id })
-        .from(directives)
-        .where(and(eq(directives.parentId, id), eq(directives.status, "open")));
-      for (const child of passedOn) {
-        await close(
-          child.id,
-          `随指令 ${directive.id} 结束：${input.outcome.trim()}`,
-        );
-      }
-    };
-    await close(directive.id, input.outcome.trim());
-  });
-  return (await getDirective(directive.id, database))!;
+  const outcome = input.outcome.trim();
+  if (!outcome) throw new TreeError("Say how it ended (outcome)");
+  return write(
+    database,
+    by,
+    async (tx) => {
+      const close = async (id: number, why: string) => {
+        await tx
+          .update(directives)
+          .set({ status: input.status, outcome: why, closedAt: now })
+          .where(eq(directives.id, id));
+        await tx
+          .update(directiveAssignments)
+          .set({ state: "closed", updatedAt: now })
+          .where(
+            and(
+              eq(directiveAssignments.directiveId, id),
+              inArray(directiveAssignments.state, [
+                "new",
+                "proposed",
+                "active",
+              ]),
+            ),
+          );
+        await tx
+          .update(unitTasks)
+          .set({ status: "dropped", updatedAt: now })
+          .where(
+            and(eq(unitTasks.directiveId, id), eq(unitTasks.status, "open")),
+          );
+        const passedOn = await tx
+          .select({ id: directives.id })
+          .from(directives)
+          .where(
+            and(eq(directives.parentId, id), eq(directives.status, "open")),
+          );
+        for (const child of passedOn) {
+          await close(
+            child.id,
+            `Closed with directive ${directive.id}: ${outcome}`,
+          );
+        }
+      };
+      await close(directive.id, outcome);
+      return (await getDirective(directive.id, tx))!;
+    },
+    (after) => ({
+      what: "directive.closed",
+      on: { kind: "directive", id: directive.id },
+      unit: input.unit,
+      why: `directive:${directive.id}`,
+      before: { status: directive.status },
+      after: { status: after.status, outcome: after.outcome },
+    }),
+    now,
+  );
 }
 
 export async function getDirective(
@@ -319,7 +423,7 @@ export async function listDirectives(
   }));
 }
 
-/** The directive passed on from this one, and theirs, as one list. */
+/** The directives passed on from this one, and theirs, as one list. */
 export async function directiveChain(
   id: number,
   database: Database = defaultDb(),
@@ -352,4 +456,8 @@ async function assignmentOf(
     throw new TreeError(`Directive ${directiveId} wasn't sent to ${unitId}`);
   }
   return { directive, assignment };
+}
+
+function day(now: Date): string {
+  return now.toISOString().slice(0, 10);
 }

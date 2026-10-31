@@ -1,28 +1,47 @@
 import { describe, expect, it } from "vitest";
 
 import { createTestDb } from "../test-db";
+import type { Actor } from "./actors";
+import { Forbidden } from "./errors";
 import { latestReports, rollUp, submitReport } from "./reports";
 import { createUnit, listUnits } from "./units";
 
+const FOUNDER: Actor = { kind: "human", id: "founder" };
+const U = (id: string): Actor => ({ kind: "unit", id });
+
 async function tree() {
   const db = await createTestDb();
-  await createUnit({ id: "company", name: "Company", summary: "公司" }, db);
+  await createUnit(
+    { id: "company", name: "Company", summary: "公司" },
+    FOUNDER,
+    {},
+    db,
+  );
   await createUnit(
     { id: "eng", parentId: "company", name: "工程", summary: "x" },
+    FOUNDER,
+    {},
     db,
   );
   await createUnit(
     { id: "mkt", parentId: "company", name: "营销", summary: "x" },
+    FOUNDER,
+    {},
     db,
   );
-  await createUnit({ id: "other", name: "别的树", summary: "x" }, db);
+  await createUnit(
+    { id: "other", name: "别的树", summary: "x" },
+    FOUNDER,
+    {},
+    db,
+  );
   return db;
 }
 
 const T0 = new Date("2026-10-25T10:00:00Z");
 
 describe("reports", () => {
-  it("lets a leaf report in plain sentences", async () => {
+  it("lets a leaf report in plain sentences, for its own unit only", async () => {
     const db = await tree();
     const r = await submitReport(
       {
@@ -31,13 +50,22 @@ describe("reports", () => {
         headline: "付费墙上线了",
         done: ["合并 #130"],
         numbers: [{ name: "付费商家", value: 0, target: 1 }],
-        by: "s",
       },
+      U("eng"),
       { now: T0 },
       db,
     );
     expect(r.headline).toEqual({ text: "付费墙上线了", cites: [] });
     expect(r.done).toEqual([{ text: "合并 #130", cites: [] }]);
+    expect(r.author).toBe("unit:eng");
+    await expect(
+      submitReport(
+        { unit: "mkt", status: "ok", headline: "x" },
+        U("eng"),
+        {},
+        db,
+      ),
+    ).rejects.toThrow(Forbidden);
   });
 
   it("makes a parent cite its children's reports in every sentence", async () => {
@@ -48,13 +76,14 @@ describe("reports", () => {
         status: "risk",
         headline: "支付还没接",
         blocked: ["等 Stripe 账户"],
-        by: "s",
       },
+      U("eng"),
       { now: T0 },
       db,
     );
     const elsewhere = await submitReport(
-      { unit: "other", status: "ok", headline: "x", by: "s" },
+      { unit: "other", status: "ok", headline: "x" },
+      U("other"),
       { now: T0 },
       db,
     );
@@ -65,8 +94,8 @@ describe("reports", () => {
           status: "risk",
           headline: { text: "首个付费客户有风险", cites: [eng.id] },
           done: ["营销进展顺利"],
-          by: "s",
         },
+        U("company"),
         {},
         db,
       ),
@@ -77,8 +106,8 @@ describe("reports", () => {
           unit: "company",
           status: "ok",
           headline: { text: "x", cites: [elsewhere.id] },
-          by: "s",
         },
+        U("company"),
         {},
         db,
       ),
@@ -88,8 +117,8 @@ describe("reports", () => {
         unit: "company",
         status: "risk",
         headline: { text: "首个付费客户卡在支付", cites: [eng.id] },
-        by: "s",
       },
+      U("company"),
       { now: T0 },
       db,
     );
@@ -100,7 +129,8 @@ describe("reports", () => {
     const db = await tree();
     await expect(
       submitReport(
-        { unit: "eng", status: "stuck", headline: "卡住了", by: "s" },
+        { unit: "eng", status: "stuck", headline: "卡住了" },
+        U("eng"),
         {},
         db,
       ),
@@ -110,18 +140,21 @@ describe("reports", () => {
   it("colours each unit by the worst latest status in its subtree", async () => {
     const db = await tree();
     await submitReport(
-      { unit: "eng", status: "stuck", headline: "x", blocked: ["y"], by: "s" },
+      { unit: "eng", status: "stuck", headline: "x", blocked: ["y"] },
+      U("eng"),
       { now: T0 },
       db,
     );
     // A newer report replaces the older one.
     await submitReport(
-      { unit: "eng", status: "ok", headline: "好了", by: "s" },
+      { unit: "eng", status: "ok", headline: "好了" },
+      U("eng"),
       { now: new Date(T0.getTime() + 1000) },
       db,
     );
     await submitReport(
-      { unit: "mkt", status: "risk", headline: "x", by: "s" },
+      { unit: "mkt", status: "risk", headline: "x" },
+      U("mkt"),
       { now: T0 },
       db,
     );

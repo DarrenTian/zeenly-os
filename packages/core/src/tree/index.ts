@@ -1,4 +1,12 @@
 export {
+  actorLabel,
+  parseActor,
+  requireHuman,
+  SCHEDULER,
+  type Actor,
+  type ActorKind,
+} from "./actors";
+export {
   decisionDesk,
   pendingUnits,
   treeOverview,
@@ -9,6 +17,13 @@ export {
   type TreeNode,
   type UnitView,
 } from "./agenda";
+export {
+  grantCapability,
+  listCapabilities,
+  revokeCapability,
+  type Capability,
+  type CapabilityLevel,
+} from "./capabilities";
 export {
   closeDirective,
   confirmTranslation,
@@ -26,11 +41,15 @@ export {
   DOC_NAMES,
   DocConflictError,
   getUnitDoc,
+  latestDocBodies,
   listUnitDocs,
   saveUnitDoc,
+  type DocName,
   type UnitDoc,
   type UnitDocVersion,
 } from "./docs";
+export { Forbidden, TreeError } from "./errors";
+export { listEvents, type Change, type Event } from "./events";
 export { handleMcp, TREE_TOOLS, UNIT_PROTOCOL } from "./mcp";
 export {
   getMessage,
@@ -60,12 +79,20 @@ export {
   type TaskStatus,
 } from "./tasks";
 export {
+  issueToken,
+  listTokens,
+  resolveToken,
+  revokeToken,
+  type IssuedToken,
+  type TokenInfo,
+} from "./tokens";
+export {
+  actsFor,
   createUnit,
   deleteUnit,
   getUnit,
   listUnits,
   personOf,
-  TreeError,
   updateUnit,
   type Unit,
   type UnitMode,

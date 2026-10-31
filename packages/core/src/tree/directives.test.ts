@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createTestDb } from "../test-db";
+import type { Actor } from "./actors";
 import {
   closeDirective,
   confirmTranslation,
@@ -9,15 +10,27 @@ import {
   issueDirective,
   translateDirective,
 } from "./directives";
+import { getUnitDoc } from "./docs";
+import { Forbidden } from "./errors";
 import { addTask, listTasks } from "./tasks";
 import { createUnit } from "./units";
 
+const FOUNDER: Actor = { kind: "human", id: "founder" };
+const U = (id: string): Actor => ({ kind: "unit", id });
+
 async function tree() {
   const db = await createTestDb();
-  await createUnit({ id: "company", name: "Company", summary: "公司" }, db);
+  await createUnit(
+    { id: "company", name: "Company", summary: "公司" },
+    FOUNDER,
+    {},
+    db,
+  );
   for (const id of ["eng", "mkt", "eval"]) {
     await createUnit(
       { id, parentId: "company", name: id, summary: id, mode: "autopilot" },
+      FOUNDER,
+      {},
       db,
     );
   }
@@ -29,6 +42,8 @@ async function tree() {
       summary: "x",
       mode: "autopilot",
     },
+    FOUNDER,
+    {},
     db,
   );
   return db;
@@ -40,61 +55,82 @@ const GOAL = {
   title: "首个付费客户",
   doneWhen: "一个商家付了钱",
   dueOn: "2026-11-08",
-  by: "founder",
 };
 
 describe("directives", () => {
   it("goes down as a directive, sideways as a request", async () => {
     const db = await tree();
-    const down = await issueDirective(GOAL, db);
+    const down = await issueDirective(GOAL, FOUNDER, {}, db);
     expect(down.assignments.map((a) => [a.unitId, a.kind, a.state])).toEqual([
       ["eng", "directive", "new"],
       ["mkt", "directive", "new"],
       ["eval", "directive", "new"],
     ]);
+    expect(down.createdBy).toBe("human:founder");
     const side = await issueDirective(
       {
         from: "eng",
         to: ["mkt", "seo"],
         title: "写上线说明",
         doneWhen: "发出去",
-        by: "s",
       },
+      U("eng"),
+      {},
       db,
     );
     expect(side.assignments.map((a) => a.kind)).toEqual(["request", "request"]);
+    // A unit's agent issues only from its own unit.
+    await expect(
+      issueDirective({ ...GOAL, from: "mkt" }, U("eng"), {}, db),
+    ).rejects.toThrow(Forbidden);
   });
 
-  it("waits on the root's person for its first layer's translations", async () => {
+  it("waits on the root's person for its first layer's translations, and a send-back becomes a guideline", async () => {
     const db = await tree();
-    const d = await issueDirective(GOAL, db);
+    const d = await issueDirective(GOAL, FOUNDER, {}, db);
     expect(d.assignments.every((a) => a.needsConfirm)).toBe(true);
 
     const proposed = await translateDirective(
       { directive: d.id, unit: "eng", translation: "两周内上线付费墙" },
+      U("eng"),
       {},
       db,
     );
     expect(proposed.state).toBe("proposed");
+    // Only the issuer's person confirms; an agent can't.
+    await expect(
+      confirmTranslation(
+        { assignment: proposed.id, ok: true },
+        U("eng"),
+        {},
+        db,
+      ),
+    ).rejects.toThrow(Forbidden);
     // Sent back: the unit translates again, reading the note.
     const back = await confirmTranslation(
-      {
-        assignment: proposed.id,
-        ok: false,
-        note: "先做试用转付费",
-        person: "founder",
-      },
-      {},
+      { assignment: proposed.id, ok: false, note: "先做试用转付费" },
+      FOUNDER,
+      { now: new Date("2026-10-31T10:00:00Z") },
       db,
     );
     expect([back.state, back.note]).toEqual(["new", "先做试用转付费"]);
+    const guidelines = await getUnitDoc(
+      { unit: "eng", name: "guidelines" },
+      db,
+    );
+    expect(guidelines?.version).toBe(1);
+    expect(guidelines?.body).toBe(
+      `- 2026-10-31 · directive ${d.id} "首个付费客户": translation sent back: 先做试用转付费`,
+    );
     await translateDirective(
       { directive: d.id, unit: "eng", translation: "上线试用转付费" },
+      U("eng"),
       {},
       db,
     );
     const ok = await confirmTranslation(
-      { assignment: proposed.id, ok: true, person: "founder" },
+      { assignment: proposed.id, ok: true },
+      FOUNDER,
       {},
       db,
     );
@@ -105,15 +141,18 @@ describe("directives", () => {
     ]);
     await expect(
       confirmTranslation(
-        { assignment: proposed.id, ok: true, person: "founder" },
+        { assignment: proposed.id, ok: true },
+        FOUNDER,
         {},
         db,
       ),
     ).rejects.toThrow(/isn't waiting/);
 
-    // Deeper down, translations take effect without the founder.
+    // Deeper down, translations take effect without the person.
     const passed = await issueDirective(
-      { ...GOAL, from: "mkt", to: ["seo"], parentId: d.id, by: "s" },
+      { ...GOAL, from: "mkt", to: ["seo"], parentId: d.id },
+      U("mkt"),
+      {},
       db,
     );
     expect(passed.assignments[0].needsConfirm).toBe(false);
@@ -123,6 +162,7 @@ describe("directives", () => {
         unit: "seo",
         translation: "排行榜页面带试用入口",
       },
+      U("seo"),
       {},
       db,
     );
@@ -131,10 +171,11 @@ describe("directives", () => {
 
   it("lets a unit say a directive isn't its own, with why", async () => {
     const db = await tree();
-    const d = await issueDirective(GOAL, db);
+    const d = await issueDirective(GOAL, FOUNDER, {}, db);
     await expect(
       translateDirective(
         { directive: d.id, unit: "eval", relevant: false },
+        U("eval"),
         {},
         db,
       ),
@@ -146,6 +187,7 @@ describe("directives", () => {
         relevant: false,
         reason: "评测不碰收费",
       },
+      U("eval"),
       {},
       db,
     );
@@ -153,6 +195,7 @@ describe("directives", () => {
     await expect(
       translateDirective(
         { directive: d.id, unit: "seo", translation: "x" },
+        U("seo"),
         {},
         db,
       ),
@@ -161,27 +204,36 @@ describe("directives", () => {
 
   it("passes on only what the unit was sent", async () => {
     const db = await tree();
-    const d = await issueDirective(GOAL, db);
+    const d = await issueDirective(GOAL, FOUNDER, {}, db);
     await expect(
-      issueDirective({ ...GOAL, from: "seo", to: ["eng"], parentId: d.id }, db),
+      issueDirective(
+        { ...GOAL, from: "seo", to: ["eng"], parentId: d.id },
+        U("seo"),
+        {},
+        db,
+      ),
     ).rejects.toThrow(/only pass on/);
-    await expect(issueDirective({ ...GOAL, to: [] }, db)).rejects.toThrow(
-      /at least one/,
-    );
     await expect(
-      issueDirective({ ...GOAL, dueOn: "next week" }, db),
+      issueDirective({ ...GOAL, to: [] }, FOUNDER, {}, db),
+    ).rejects.toThrow(/at least one/);
+    await expect(
+      issueDirective({ ...GOAL, dueOn: "next week" }, FOUNDER, {}, db),
     ).rejects.toThrow(/YYYY-MM-DD/);
   });
 
   it("is closed by its issuer only, taking its passed-on directives and unstarted tasks with it", async () => {
     const db = await tree();
-    const d = await issueDirective(GOAL, db);
+    const d = await issueDirective(GOAL, FOUNDER, {}, db);
     const passed = await issueDirective(
-      { ...GOAL, from: "mkt", to: ["seo"], parentId: d.id, by: "s" },
+      { ...GOAL, from: "mkt", to: ["seo"], parentId: d.id },
+      U("mkt"),
+      {},
       db,
     );
     await addTask(
-      { unit: "seo", title: "x", directive: passed.id, source: "s" },
+      { unit: "seo", title: "x", directive: passed.id },
+      U("seo"),
+      {},
       db,
     );
     expect((await directiveChain(d.id, db)).map((c) => c.id)).toEqual([
@@ -191,6 +243,7 @@ describe("directives", () => {
     await expect(
       closeDirective(
         { directive: d.id, unit: "mkt", status: "done", outcome: "x" },
+        U("mkt"),
         {},
         db,
       ),
@@ -202,6 +255,7 @@ describe("directives", () => {
         status: "done",
         outcome: "第一个商家付了 $49",
       },
+      FOUNDER,
       {},
       db,
     );
@@ -210,12 +264,13 @@ describe("directives", () => {
     const child = (await getDirective(passed.id, db))!;
     expect([child.status, child.outcome]).toEqual([
       "done",
-      `随指令 ${d.id} 结束：第一个商家付了 $49`,
+      `Closed with directive ${d.id}: 第一个商家付了 $49`,
     ]);
     expect(await listTasks({ unit: "seo" }, db)).toEqual([]);
     await expect(
       translateDirective(
         { directive: d.id, unit: "eng", translation: "x" },
+        U("eng"),
         {},
         db,
       ),

@@ -1,25 +1,43 @@
 import { describe, expect, it } from "vitest";
 
 import { createTestDb } from "../test-db";
+import { type Actor, SCHEDULER } from "./actors";
 import { decisionDesk } from "./agenda";
 import { confirmTranslation, getDirective, issueDirective } from "./directives";
+import { getUnitDoc } from "./docs";
 import { handleMcp, TREE_TOOLS } from "./mcp";
 import { resolveMessage } from "./messages";
 import { createUnit } from "./units";
 
 type Db = Awaited<ReturnType<typeof createTestDb>>;
 
+const FOUNDER: Actor = { kind: "human", id: "founder" };
+const U = (id: string): Actor => ({ kind: "unit", id });
+
 let nextId = 1;
-async function rpc(db: Db, method: string, params?: Record<string, unknown>) {
+async function rpc(
+  db: Db,
+  actor: Actor,
+  method: string,
+  params?: Record<string, unknown>,
+) {
   return handleMcp(
     { jsonrpc: "2.0", id: nextId++, method, params },
-    { database: db },
+    { actor, database: db },
   );
 }
 
-/** Calls a tool; its JSON result, or throws its error text. */
-async function call(db: Db, name: string, args: Record<string, unknown>) {
-  const reply = (await rpc(db, "tools/call", { name, arguments: args })) as {
+/** Calls a tool as `actor`; its JSON result, or throws its error text. */
+async function call(
+  db: Db,
+  actor: Actor,
+  name: string,
+  args: Record<string, unknown>,
+) {
+  const reply = (await rpc(db, actor, "tools/call", {
+    name,
+    arguments: args,
+  })) as {
     result: { content: { text: string }[]; isError?: boolean };
   };
   const text = reply.result.content[0].text;
@@ -30,21 +48,21 @@ async function call(db: Db, name: string, args: Record<string, unknown>) {
 describe("handleMcp", () => {
   it("speaks enough MCP for a client to connect and list the tools", async () => {
     const db = await createTestDb();
-    const init = (await rpc(db, "initialize", {
+    const init = (await rpc(db, U("x"), "initialize", {
       protocolVersion: "2025-03-26",
       capabilities: {},
       clientInfo: { name: "test", version: "1" },
     })) as { result: { protocolVersion: string; instructions: string } };
     expect(init.result.protocolVersion).toBe("2025-03-26");
-    expect(init.result.instructions).toContain("unit_pending");
+    expect(init.result.instructions).toContain("Your token names your unit");
     expect(
       await handleMcp(
         { jsonrpc: "2.0", method: "notifications/initialized" },
-        { database: db },
+        { actor: U("x"), database: db },
       ),
     ).toBeNull();
 
-    const list = (await rpc(db, "tools/list")) as {
+    const list = (await rpc(db, U("x"), "tools/list")) as {
       result: { tools: { name: string; inputSchema: { type: string } }[] };
     };
     expect(list.result.tools.map((t) => t.name)).toEqual(
@@ -58,18 +76,25 @@ describe("handleMcp", () => {
       list.result.tools.every((t) => t.inputSchema.type === "object"),
     ).toBe(true);
 
-    expect(await rpc(db, "nope")).toMatchObject({ error: { code: -32601 } });
-    await expect(call(db, "unit_get", {})).rejects.toThrow(/unit/);
-    await expect(call(db, "unit_get", { unit: "nope" })).rejects.toThrow(
-      'No unit "nope"',
-    );
+    expect(await rpc(db, U("x"), "nope")).toMatchObject({
+      error: { code: -32601 },
+    });
+    await expect(call(db, FOUNDER, "unit_get", {})).rejects.toThrow(/unit/);
+    await expect(
+      call(db, FOUNDER, "unit_get", { unit: "nope" }),
+    ).rejects.toThrow('No unit "nope"');
   });
 
-  it("runs a directive from the founder through three units, up to the founder's desk and back", async () => {
+  it("runs a directive from the person through three units, up to their desk and back", async () => {
     const db = await createTestDb();
-    await createUnit({ id: "company", name: "Company", summary: "公司" }, db);
+    await createUnit(
+      { id: "company", name: "Company", summary: "公司" },
+      FOUNDER,
+      {},
+      db,
+    );
     for (const id of ["engineering", "marketing", "evaluation"]) {
-      await call(db, "unit_create", {
+      await call(db, FOUNDER, "unit_create", {
         id,
         parentId: "company",
         name: id,
@@ -77,57 +102,69 @@ describe("handleMcp", () => {
         mode: "autopilot",
       });
     }
-    // The founder issues it from the root, on the root's page.
+    // The person issues it from the root, on the root's page.
     const d = await issueDirective(
       {
         from: "company",
         to: ["engineering", "marketing", "evaluation"],
         title: "首个付费客户",
         doneWhen: "一个商家付了钱",
-        by: "founder",
       },
+      FOUNDER,
+      {},
       db,
     );
 
-    // The hourly session: what's pending, then each unit in turn.
-    const pending = await call(db, "unit_pending", {});
+    // The scheduler asks who has work; each unit's own session runs.
+    const pending = await call(db, SCHEDULER, "unit_pending", {});
     expect(pending.map((p: { unit: string }) => p.unit)).toEqual([
       "engineering",
       "evaluation",
       "marketing",
     ]);
-    const view = await call(db, "unit_get", { unit: "marketing" });
+    const view = await call(db, U("marketing"), "unit_get", {
+      unit: "marketing",
+    });
     expect(view.directives[0].directive.title).toBe("首个付费客户");
+    // A unit's agent sees only its own unit, and acts only as it.
+    await expect(
+      call(db, U("marketing"), "unit_get", { unit: "engineering" }),
+    ).rejects.toThrow(/reads its own unit/);
+    await expect(
+      call(db, U("marketing"), "directive_translate", {
+        directive: d.id,
+        unit: "engineering",
+        translation: "x",
+      }),
+    ).rejects.toThrow(/doesn't act for engineering/);
     for (const [unit, translation] of [
       ["engineering", "试用转付费上线"],
       ["marketing", "带来 20 个试用商家"],
       ["evaluation", "证明付费版的排名提升可信"],
     ]) {
-      await call(db, "directive_translate", {
+      await call(db, U(unit), "directive_translate", {
         directive: d.id,
         unit,
         translation,
       });
     }
-    await call(db, "task_add", {
+    await call(db, U("engineering"), "task_add", {
       unit: "engineering",
       title: "加 Stripe 结账",
       directive: d.id,
       priority: 0,
-      source: "hourly",
     });
     // Marketing wants a free tier; engineering's plan is paid only.
-    const up = await call(db, "message_send", {
+    const up = await call(db, U("marketing"), "message_send", {
       from: "marketing",
       kind: "escalation",
       subject: "要不要免费档",
       body: "选项：有免费档 / 只有试用。我选免费档",
       directive: d.id,
-      by: "hourly",
     });
     expect([up.toUnit, up.forPerson]).toEqual(["company", true]);
 
-    // The founder's desk: three translations to confirm and the escalation.
+    // The person's desk: three translations to confirm and the escalation.
     const desk = await decisionDesk("founder", db);
     expect(desk.map((i) => i.kind)).toEqual([
       "escalation",
@@ -138,64 +175,62 @@ describe("handleMcp", () => {
     for (const item of desk) {
       if (item.kind === "confirm") {
         await confirmTranslation(
-          { assignment: item.assignment.id, ok: true, person: "founder" },
+          { assignment: item.assignment.id, ok: true },
+          FOUNDER,
           {},
           db,
         );
       }
     }
     await resolveMessage(
-      {
-        message: up.id,
-        person: "founder",
-        resolution: "只有试用",
-        by: "founder",
-      },
+      { message: up.id, resolution: "只有试用" },
+      FOUNDER,
       {},
       db,
     );
     expect(await decisionDesk("founder", db)).toEqual([]);
+    // Marketing's guidelines now carry the decision.
+    expect(
+      (await getUnitDoc({ unit: "marketing", name: "guidelines" }, db))?.body,
+    ).toContain("要不要免费档 → 只有试用");
 
-    // Next hour: the units report; marketing reads the answer.
-    const next = await call(db, "unit_pending", {});
+    // Next run: the units report; marketing reads the answer.
+    const next = await call(db, SCHEDULER, "unit_pending", {});
     expect(
       next.find((p: { unit: string }) => p.unit === "marketing").reasons,
     ).toEqual([`read answers to messages ${up.id}, then report`, "report"]);
     const reports: Record<string, number> = {};
     for (const unit of ["engineering", "marketing", "evaluation"]) {
       reports[unit] = (
-        await call(db, "report_submit", {
+        await call(db, U(unit), "report_submit", {
           unit,
           directive: d.id,
           status: unit === "engineering" ? "risk" : "ok",
           headline: `${unit} 在推进`,
-          by: "hourly",
         })
       ).id;
     }
     await expect(
-      call(db, "report_submit", {
+      call(db, U("company"), "report_submit", {
         unit: "company",
         status: "ok",
         headline: "都好",
-        by: "hourly",
       }),
     ).rejects.toThrow(/cites a report/);
-    await call(db, "report_submit", {
+    await call(db, U("company"), "report_submit", {
       unit: "company",
       status: "risk",
       headline: {
         text: "首个付费客户：结账有风险",
         cites: [reports.engineering],
       },
-      by: "hourly",
     });
-    const tree = await call(db, "unit_tree", {});
+    const tree = await call(db, SCHEDULER, "unit_tree", {});
     expect(tree.find((n: { id: string }) => n.id === "company").status).toBe(
       "risk",
     );
 
-    const got = await call(db, "directive_get", { directive: d.id });
+    const got = await call(db, FOUNDER, "directive_get", { directive: d.id });
     expect(
       got.assignments.map((a: { translation: string }) => a.translation),
     ).toEqual([
@@ -205,7 +240,22 @@ describe("handleMcp", () => {
     ]);
     expect(got.reports).toHaveLength(3);
 
-    await call(db, "directive_close", {
+    // Everything above is on marketing's activity stream (the guideline is
+    // written inside the resolve, so its event comes first).
+    const events = await call(db, U("marketing"), "unit_events", {
+      unit: "marketing",
+    });
+    expect(events.map((e: { what: string }) => e.what)).toEqual([
+      "report.submitted",
+      "message.resolved",
+      "doc.saved",
+      "directive.confirmed",
+      "message.sent",
+      "directive.translated",
+      "unit.created",
+    ]);
+
+    await call(db, FOUNDER, "directive_close", {
       directive: d.id,
       unit: "company",
       status: "done",
