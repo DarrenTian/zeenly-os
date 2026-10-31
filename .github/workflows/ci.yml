@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: zeenly_os
+          POSTGRES_PASSWORD: zeenly_os
+          POSTGRES_DB: zeenly_os
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://zeenly_os:zeenly_os@localhost:5432/zeenly_os
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm db:migrate
+      - name: Migrations match schema
+        run: |
+          pnpm db:generate
+          test -z "$(git status --porcelain packages/core/drizzle)" || {
+            echo "packages/core/src/db/schema.ts changed without a migration. Run pnpm db:generate and commit the result."
+            git status --porcelain packages/core/drizzle
+            exit 1
+          }

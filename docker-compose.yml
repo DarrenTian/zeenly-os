@@ -1,0 +1,15 @@
+# Local Postgres for development: `docker compose up -d`. Tests don't need
+# it: they run on in-memory PGlite.
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: zeenly_os
+      POSTGRES_PASSWORD: zeenly_os
+      POSTGRES_DB: zeenly_os
+    ports:
+      - "5432:5432"
+    volumes:
+      - db:/var/lib/postgresql/data
+volumes:
+  db:

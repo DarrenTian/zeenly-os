@@ -1,0 +1,19 @@
+{
+  "name": "zeenly-os",
+  "version": "0.0.1",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "pnpm -r test",
+    "db:generate": "pnpm --filter @zeenly-os/core db:generate",
+    "db:migrate": "pnpm --filter @zeenly-os/core db:migrate"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "devDependencies": {
+    "prettier": "^3.9.8"
+  }
+}
