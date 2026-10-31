@@ -1,0 +1,18 @@
+node_modules
+coverage
+.next/
+out/
+build
+.DS_Store
+*.pem
+npm-debug.log*
+.pnpm-debug.log*
+.env*
+!.env.example
+.vercel
+*.tsbuildinfo
+next-env.d.ts
+# Notes some tools generate next to the root CLAUDE.md, which is ours.
+AGENTS.md
+CLAUDE.md
+!/CLAUDE.md
