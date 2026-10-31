@@ -1,2 +1,4 @@
 pnpm-lock.yaml
 packages/core/drizzle/meta
+.next
+next-env.d.ts

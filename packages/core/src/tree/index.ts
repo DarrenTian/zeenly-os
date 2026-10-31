@@ -49,7 +49,8 @@ export {
   type UnitDocVersion,
 } from "./docs";
 export { Forbidden, TreeError } from "./errors";
-export { listEvents, type Change, type Event } from "./events";
+export { listEvents, record, write, type Change, type Event } from "./events";
+export { recordRun, type Run, type RunOutcome } from "./runs";
 export { handleMcp, TREE_TOOLS, UNIT_PROTOCOL } from "./mcp";
 export {
   getMessage,
