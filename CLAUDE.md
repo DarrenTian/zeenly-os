@@ -9,6 +9,9 @@ zeenly-os is a kernel for running any one-person company as a tree of agent role
 - `packages/core` holds all logic and the database. Apps stay thin: routing, auth and UI only. If you're writing logic in an app, move it to core.
 - Agents and people change the tree only through core's functions; the MCP server (`packages/core/src/tree/mcp.ts`) is the agents' way in, and the pages call the same functions.
 - `UNIT_PROTOCOL` is what every agent reads on connecting. Change it only when the protocol changes, and keep it short.
+- Pages are components in `packages/ui`, each taking its data from core's functions; `apps/zeenly-os` is thin routes over them. A company that wants its own app composes the same components with its own pages, instead of forking this one.
+- The kernel runs one company on one database and knows nothing about money, plans or tenants. Hosting several companies, accounts, billing and provisioning belong to whoever hosts it, outside this repository, talking to the kernel through its MCP server and its packages. What a host may need from the kernel is generic and small: sign-in through an outside identity provider, choosing the database per request, and a host hook (a few navigation links and a notice). None of it exists yet; add it when a host needs it, never a flag for one host.
+- A company's own additions that need no page (sync jobs, routines, skills) live in that company's repository and work the tree through MCP with a token, like any agent.
 
 ## Checks
 
