@@ -10,6 +10,10 @@
  *   zeenly-os migrate  migrate the Postgres at DATABASE_URL, without the
  *                      server; for deploys that run with
  *                      ZEENLY_OS_MIGRATE_ON_START=off
+ *   zeenly-os export <root> [file]
+ *                      the company under that root, as one JSON file
+ *   zeenly-os import <file>
+ *                      load such a file into a database without a company
  *
  * Settings, as environment variables: ZEENLY_OS_PORT (3000), ZEENLY_OS_DATA
  * (~/.zeenly-os), ZEENLY_OS_BUDGET_USD per session (2), ZEENLY_OS_MAX_TURNS
@@ -20,6 +24,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname } from "node:path";
 import { parseArgs } from "node:util";
@@ -39,7 +44,9 @@ if (values.help || command === "help") {
   console.log(`zeenly-os          start it: the pages at ${baseUrl}, the scheduler waking units
 zeenly-os run      one scheduler pass now, on a running server
 zeenly-os token    your token, and how to point your own Claude at it
-zeenly-os migrate  migrate the Postgres at DATABASE_URL, without the server`);
+zeenly-os migrate  migrate the Postgres at DATABASE_URL, without the server
+zeenly-os export <root> [file]   the company under that root, as one JSON file
+zeenly-os import <file>          load such a file into a database without a company`);
   process.exit(0);
 }
 
@@ -79,6 +86,12 @@ switch (command) {
   }
   case "migrate":
     await migrate();
+    break;
+  case "export":
+    await exportTo(positionals[1], positionals[2]);
+    break;
+  case "import":
+    await importFrom(positionals[1]);
     break;
   default:
     console.error(`No command "${command}"; try zeenly-os help`);
@@ -126,6 +139,80 @@ async function migrate(): Promise<void> {
     );
     process.exit(1);
   }
+}
+
+/**
+ * Export and import open the database themselves, like `migrate`. The
+ * embedded one allows a single process, so they refuse while the server
+ * holds it.
+ */
+async function openDirectly(): Promise<typeof import("@zeenly-os/core")> {
+  const core = await import("@zeenly-os/core");
+  if (!core.env().DATABASE_URL) {
+    const running = await fetch(baseUrl, { signal: AbortSignal.timeout(1000) })
+      .then(() => true)
+      .catch(() => false);
+    if (running) {
+      console.error(
+        `zeenly-os is running at ${baseUrl} and holds the embedded database: stop it first.`,
+      );
+      process.exit(1);
+    }
+  }
+  const status = await core.checkSchema();
+  if (status.state === "behind") await core.migrateDb();
+  return core;
+}
+
+async function exportTo(root: string | undefined, file: string | undefined) {
+  if (!root) {
+    console.error("Usage: zeenly-os export <root unit> [file]");
+    process.exit(2);
+  }
+  const { exportCompany, bundleCounts } = await openDirectly();
+  try {
+    const bundle = await exportCompany(root);
+    const json = `${JSON.stringify(bundle, null, 2)}\n`;
+    if (file) {
+      writeFileSync(file, json, { mode: 0o600 });
+      console.error(`Wrote ${file}: ${describe(bundleCounts(bundle))}`);
+    } else {
+      process.stdout.write(json);
+    }
+    process.exit(0);
+  } catch (err) {
+    console.error((err as Error).message);
+    process.exit(1);
+  }
+}
+
+async function importFrom(file: string | undefined) {
+  if (!file) {
+    console.error("Usage: zeenly-os import <file>");
+    process.exit(2);
+  }
+  let input: unknown;
+  try {
+    input = JSON.parse(readFileSync(file, "utf8"));
+  } catch (err) {
+    console.error(`Can't read ${file}: ${(err as Error).message}`);
+    process.exit(1);
+  }
+  const { importCompany } = await openDirectly();
+  try {
+    const counts = await importCompany(input, { kind: "system", id: "import" });
+    console.log(`Imported ${describe(counts)}.`);
+    process.exit(0);
+  } catch (err) {
+    console.error(`Nothing imported: ${(err as Error).message}`);
+    process.exit(1);
+  }
+}
+
+function describe(counts: Record<string, number>): string {
+  return Object.entries(counts)
+    .map(([k, n]) => `${n} ${k}`)
+    .join(", ");
 }
 
 /** Starts Next.js in this package: the built app if there is one, else dev. */

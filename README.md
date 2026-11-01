@@ -40,6 +40,10 @@ Open `/token` on it for a token that acts as you, with the `claude mcp add` line
 
 A second company is best a second install with its own database: unit ids (`engineering`, say) are global in a database, so two companies with the same role names would collide. A second root in the same database works when its role ids differ; the home page lists every company you steer.
 
+## Moving a company
+
+`zeenly-os export <root> [file]` writes the company under that root unit as one JSON file: its units, their documents and capabilities, and its directives, tasks, messages, reports and events (never tokens). `zeenly-os import <file>` loads one into a database that has no company yet, all of it or nothing, keeping the ids of directives, tasks, messages and reports so references in text and reports' citations still hold. Both open the database themselves: with `DATABASE_URL` set they work beside a running server; with the embedded database, stop the server first.
+
 ## Upgrading
 
 The server migrates its database as it starts, under a lock, so processes starting together migrate it once. A deploy that should stop before new code goes live if a migration fails sets `ZEENLY_OS_MIGRATE_ON_START=off` and runs `zeenly-os migrate` (with `DATABASE_URL`) first. Code never writes to a database missing migrations it needs: pages still read, and every write says to migrate. A database a newer kernel has migrated is fine, because a migration only adds; removals come a release later (see `CLAUDE.md`, Migrations).

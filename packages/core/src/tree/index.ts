@@ -18,6 +18,14 @@ export {
   type UnitView,
 } from "./agenda";
 export {
+  BUNDLE_FORMAT,
+  bundleCounts,
+  companyBundle,
+  exportCompany,
+  importCompany,
+  type CompanyBundle,
+} from "./bundle";
+export {
   grantCapability,
   listCapabilities,
   revokeCapability,
