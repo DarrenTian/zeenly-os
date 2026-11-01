@@ -38,7 +38,7 @@ The pages and the MCP server run anywhere Next.js does; the scheduler doesn't (i
 
 Roles then run from a machine of yours: the same repository with the same `DATABASE_URL`, `ZEENLY_OS_URL=https://your.deployment` so sessions reach the hosted MCP server, and `pnpm --filter zeenly-os cli`. Your own Claude Code acts as you through the MCP server too: mint a token on that machine with `zeenly-os token`, and use the `claude mcp add` line it prints with the hosted URL.
 
-A second company is a second root: `unit_create` without a parent, from your own Claude; the home page lists every company you steer.
+A second company is best a second install with its own database: unit ids (`engineering`, say) are global in a database, so two companies with the same role names would collide. A second root in the same database works when its role ids differ; the home page lists every company you steer.
 
 ## Repository layout
 
