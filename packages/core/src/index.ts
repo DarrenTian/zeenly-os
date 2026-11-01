@@ -11,4 +11,5 @@ export {
 } from "./db";
 export * as schema from "./db/schema";
 export { env, parseEnv, type Env } from "./env";
+export { health, type Health } from "./health";
 export * from "./tree";
