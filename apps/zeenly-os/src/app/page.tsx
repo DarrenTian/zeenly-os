@@ -95,6 +95,13 @@ export default async function HomePage() {
           zeenly-os run
         </pre>
         <p className="mt-2 text-muted">
+          Your own Claude Code can work the tree as you with a token from{" "}
+          <a href="/token" className="underline">
+            /token
+          </a>
+          .
+        </p>
+        <p className="mt-2 text-muted">
           {schedulerOn
             ? "The scheduler in this server does that on its own every few minutes; the command runs a pass now."
             : "The scheduler is off on this server (ZEENLY_OS_SCHEDULER=off): roles run when you run that command on a machine with Claude Code, or when you work as them from your own Claude."}{" "}
