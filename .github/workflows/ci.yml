@@ -38,8 +38,8 @@ jobs:
       - name: Migrations match schema
         run: |
           pnpm db:generate
-          test -z "$(git status --porcelain packages/core/drizzle)" || {
-            echo "packages/core/src/db/schema.ts changed without a migration. Run pnpm db:generate and commit the result."
-            git status --porcelain packages/core/drizzle
+          test -z "$(git status --porcelain packages/core/drizzle packages/core/src/db/migrations.ts)" || {
+            echo "packages/core/src/db/schema.ts changed without a migration, or the bundle is stale. Run pnpm db:generate and commit the result."
+            git status --porcelain packages/core/drizzle packages/core/src/db/migrations.ts
             exit 1
           }

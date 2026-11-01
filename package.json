@@ -1,9 +1,12 @@
 {
-  "name": "zeenly-os",
+  "name": "zeenly-os-workspace",
   "version": "0.0.1",
   "private": true,
   "license": "MIT",
   "scripts": {
+    "dev": "pnpm --filter zeenly-os dev",
+    "build": "pnpm -r build",
+    "start": "pnpm --filter zeenly-os start",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
     "format": "prettier --write .",

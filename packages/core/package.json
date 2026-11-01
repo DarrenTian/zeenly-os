@@ -12,19 +12,22 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint --max-warnings=0",
     "test": "vitest run",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:generate": "drizzle-kit generate && tsx scripts/bundle-migrations.ts",
+    "db:migrate": "drizzle-kit migrate",
+    "db:bundle": "tsx scripts/bundle-migrations.ts"
   },
   "dependencies": {
+    "@electric-sql/pglite": "^0.3.0",
     "drizzle-orm": "0.45.3",
     "postgres": "3.4.9",
     "zod": "4.6.5"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "^0.3.0",
     "@types/node": "^22",
     "drizzle-kit": "0.31.11",
     "eslint": "^9.39.5",
+    "prettier": "^3.9.10",
+    "tsx": "^4",
     "typescript": "^5",
     "typescript-eslint": "^8",
     "vitest": "~4.1.11"

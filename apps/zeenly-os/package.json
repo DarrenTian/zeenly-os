@@ -1,0 +1,37 @@
+{
+  "name": "zeenly-os",
+  "version": "0.0.1",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "zeenly-os": "./bin/zeenly-os.mjs"
+  },
+  "scripts": {
+    "dev": "next dev --port 3000",
+    "build": "next build",
+    "start": "next start --port 3000",
+    "cli": "tsx src/cli/index.ts",
+    "typecheck": "next typegen && tsc --noEmit",
+    "lint": "eslint --max-warnings=0",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@zeenly-os/core": "workspace:*",
+    "next": "16.3.6",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "tsx": "^4"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "16.3.6",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "vitest": "~4.1.11"
+  }
+}
