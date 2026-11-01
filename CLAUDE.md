@@ -28,7 +28,7 @@ pnpm test
 
 ## Migrations
 
-Every company runs on its own database, and they upgrade one after another, so for a while the previous kernel runs on a database the new one has migrated. A migration therefore only adds: tables, nullable columns or columns with a default, indexes. What takes something away (dropping a table or column, renaming, changing a type, `SET NOT NULL`) goes in a later release, once every company has the additions and no code reads the old shape; its file's first line is `-- contract`. `pnpm db:check` (in CI) enforces this, and that each migration is dated after the one before it, since a database skips any migration older than its newest.
+An upgrade doesn't stop everything at once: during a deploy, with several servers on one database, or after rolling back, the previous kernel runs on a database the new one has migrated. A migration therefore only adds: tables, nullable columns or columns with a default, indexes. What takes something away (dropping a table or column, renaming, changing a type, `SET NOT NULL`) goes in a later release, once no running version reads the old shape; its file's first line is `-- contract`. `pnpm db:check` (in CI) enforces this, and that each migration is dated after the one before it, since a database skips any migration older than its newest.
 
 ## Commits
 

@@ -84,14 +84,14 @@ const writable = new WeakSet<Database>();
  * Refuses to write to a database that hasn't had every migration this code
  * needs: code writing columns that aren't there yet would fail halfway or
  * worse. A database ahead of the code is fine: migrations only add until
- * every company has moved on (see CLAUDE.md, Migrations).
+ * no running version needs what they remove (see CLAUDE.md, Migrations).
  */
 async function assertWritable(database: Database): Promise<void> {
   if (writable.has(database)) return;
   const status = await checkSchema(database);
   if (status.state === "behind") {
     throw new SchemaBehind(
-      `This company's database is behind the code (missing ${status.missing.join(", ")}), so nothing can be written until it's migrated: run \`zeenly-os migrate\`.`,
+      `The database is behind the code (missing ${status.missing.join(", ")}), so nothing can be written until it's migrated: run \`zeenly-os migrate\`.`,
     );
   }
   writable.add(database);

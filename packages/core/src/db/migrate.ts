@@ -1,5 +1,5 @@
 /**
- * Migrating a company's database, and knowing whether it has been.
+ * Migrating the database, and knowing whether it has been.
  *
  * Several processes can start on one database at once (serverless cold
  * starts, a deploy job beside a running server), so migrating takes a lock

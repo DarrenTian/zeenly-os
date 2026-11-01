@@ -1,9 +1,10 @@
 /**
- * The rule that lets companies upgrade one at a time: a migration only adds
+ * The rule that lets the previous kernel keep running while a new one
+ * migrates (a deploy, several servers, a rollback): a migration only adds
  * (tables, nullable columns, indexes), so the previous kernel still runs on
  * a migrated database. What takes something away (a drop, a rename, a type
- * change, a new NOT NULL) waits for a later release, once every company's
- * database has the additions, and says so: its first line is `-- contract`.
+ * change, a new NOT NULL) waits for a later release, once no running
+ * version needs what it removes, and says so: its first line is `-- contract`.
  * `scripts/check-migrations.ts` runs this in CI.
  */
 
@@ -45,7 +46,7 @@ export function checkMigrations(files: readonly MigrationFile[]): string[] {
     for (const { pattern, what } of TAKES_AWAY) {
       if (pattern.test(sql)) {
         problems.push(
-          `${file.tag} ${what}: the kernel still running on other companies would break. Only add in this release; take away in a later one, with \`-- contract\` as its first line.`,
+          `${file.tag} ${what}: the previous kernel, still running during an upgrade, would break. Only add in this release; take away in a later one, with \`-- contract\` as its first line.`,
         );
       }
     }
