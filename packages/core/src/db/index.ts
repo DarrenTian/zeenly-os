@@ -47,16 +47,24 @@ function connect(): Connection {
   };
 }
 
-let instance: Connection | undefined;
+// One connection per process, kept on globalThis: a bundler (Next.js
+// compiles this package once per route) can load this module more than
+// once, and two copies would each open the embedded database, which allows
+// one opener and would show each other stale rows.
+const shared = globalThis as { __zeenlyOsDb?: Connection };
+
+function connection(): Connection {
+  return (shared.__zeenlyOsDb ??= connect());
+}
 
 /** Lazily connects on first use, so importing this module never needs env vars. */
 export function db(): Database {
-  return (instance ??= connect()).db;
+  return connection().db;
 }
 
 /** Which database this is, for the first-run message and the status line. */
 export function databaseInfo(): DatabaseInfo {
-  return (instance ??= connect()).info;
+  return connection().info;
 }
 
 /**

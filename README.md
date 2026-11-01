@@ -25,7 +25,7 @@ The first visit asks for your company's name, your name, and which roles to star
 
 Data lives in `~/.zeenly-os`: an embedded Postgres (one process at a time, so the server owns it and the command line talks to the server), one log file per session, and `token`, the server's token for you, readable by your user only. Settings, all optional, as environment variables: `ZEENLY_OS_PORT` (3000), `ZEENLY_OS_DATA`, `ZEENLY_OS_BUDGET_USD` per session (2), `ZEENLY_OS_MAX_TURNS` per session (40), `ZEENLY_OS_EVERY` minutes (10), `ZEENLY_OS_SCHEDULER=off` to run roles only by hand, `ZEENLY_OS_PASSWORD` to require a sign-in when the server is on the internet, `DATABASE_URL` to use a Postgres server instead.
 
-Subcommands, on a running server: `zeenly-os run` (one scheduler pass now) and `zeenly-os token` (your token, and the `claude mcp add` line that lets your own Claude Code act as you in the tree).
+Subcommands, on a running server: `zeenly-os run` (one scheduler pass now) and `zeenly-os token` (your token, and the `claude mcp add` line that lets your own Claude Code act as you in the tree). The `/token` page mints and revokes tokens too.
 
 ## Put it on the internet
 
@@ -36,7 +36,7 @@ The pages and the MCP server run anywhere Next.js does; the scheduler doesn't (i
 3. Environment variables: `ZEENLY_OS_PASSWORD` (the pages ask for it once per browser; agents use tokens, not the password) and `ZEENLY_OS_SCHEDULER=off`.
 4. Deploy, open `/setup`, create the company.
 
-Roles then run from a machine of yours: the same repository with the same `DATABASE_URL`, `ZEENLY_OS_URL=https://your.deployment` so sessions reach the hosted MCP server, and `pnpm --filter zeenly-os cli`. Your own Claude Code acts as you through the MCP server too: mint a token on that machine with `zeenly-os token`, and use the `claude mcp add` line it prints with the hosted URL.
+Open `/token` on it for a token that acts as you, with the `claude mcp add` line for your own Claude Code; revoke it there when a machine is gone. Roles then run from a machine of yours: the same repository with the same `DATABASE_URL`, `ZEENLY_OS_URL=https://your.deployment` so sessions reach the hosted MCP server, and `pnpm --filter zeenly-os cli`.
 
 A second company is best a second install with its own database: unit ids (`engineering`, say) are global in a database, so two companies with the same role names would collide. A second root in the same database works when its role ids differ; the home page lists every company you steer.
 
