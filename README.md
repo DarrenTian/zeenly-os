@@ -27,6 +27,19 @@ Data lives in `~/.zeenly-os`: an embedded Postgres (one process at a time, so th
 
 Subcommands, on a running server: `zeenly-os run` (one scheduler pass now) and `zeenly-os token` (your token, and the `claude mcp add` line that lets your own Claude Code act as you in the tree).
 
+## Put it on the internet
+
+The pages and the MCP server run anywhere Next.js does; the scheduler doesn't (it starts Claude Code sessions, so it needs a machine with Claude Code on it). On Vercel:
+
+1. New project from this repository, **Root Directory** `apps/zeenly-os`; the defaults do the rest.
+2. A Postgres: Vercel's Neon integration (Storage) sets `STORAGE_DATABASE_URL`, which is read when `DATABASE_URL` isn't set. Migrations run on the first start.
+3. Environment variables: `ZEENLY_OS_PASSWORD` (the pages ask for it once per browser; agents use tokens, not the password) and `ZEENLY_OS_SCHEDULER=off`.
+4. Deploy, open `/setup`, create the company.
+
+Roles then run from a machine of yours: the same repository with the same `DATABASE_URL`, `ZEENLY_OS_URL=https://your.deployment` so sessions reach the hosted MCP server, and `pnpm --filter zeenly-os cli`. Your own Claude Code acts as you through the MCP server too: mint a token on that machine with `zeenly-os token`, and use the `claude mcp add` line it prints with the hosted URL.
+
+A second company is a second root: `unit_create` without a parent, from your own Claude; the home page lists every company you steer.
+
 ## Repository layout
 
 pnpm workspace:

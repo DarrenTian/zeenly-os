@@ -48,8 +48,17 @@ export async function ensureLocalToken(): Promise<string | null> {
     { actor: { kind: "human", id: person }, label: "local", ttlMs: null },
     SCHEDULER,
   );
-  mkdirSync(env().ZEENLY_OS_DATA, { recursive: true });
-  writeFileSync(localTokenPath(), `${issued.token}\n`, { mode: 0o600 });
-  chmodSync(localTokenPath(), 0o600);
+  try {
+    mkdirSync(env().ZEENLY_OS_DATA, { recursive: true });
+    writeFileSync(localTokenPath(), `${issued.token}\n`, { mode: 0o600 });
+    chmodSync(localTokenPath(), 0o600);
+  } catch (err) {
+    // A hosted server (Vercel, say) has no disk to keep it on, and no command
+    // line beside it that would read it; the pages and the MCP server work
+    // without it, so this is worth a line in the log, not a failed start.
+    console.warn(
+      `zeenly-os · could not write ${localTokenPath()}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
   return issued.token;
 }
