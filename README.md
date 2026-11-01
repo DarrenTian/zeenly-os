@@ -46,7 +46,7 @@ A second company is best a second install with its own database: unit ids (`engi
 
 ## Upgrading
 
-The server migrates its database as it starts, under a lock, so processes starting together migrate it once. A deploy that should stop before new code goes live if a migration fails sets `ZEENLY_OS_MIGRATE_ON_START=off` and runs `zeenly-os migrate` (with `DATABASE_URL`) first. Code never writes to a database missing migrations it needs: pages still read, and every write says to migrate. A database a newer kernel has migrated is fine, because a migration only adds; removals come a release later (see `CLAUDE.md`, Migrations).
+The server migrates its database as it starts, under a lock, so processes starting together migrate it once. A deploy that should stop before new code goes live if a migration fails sets `ZEENLY_OS_MIGRATE_ON_START=off` and runs `zeenly-os migrate` (with `DATABASE_URL`) first. `GET /api/health` answers 200 when the database answers and has every migration the code needs, and 503 saying what's wrong otherwise; it needs no token, so a deploy or a monitor can ask it. Code never writes to a database missing migrations it needs: pages still read, and every write says to migrate. A database a newer kernel has migrated is fine, because a migration only adds; removals come a release later (see `CLAUDE.md`, Migrations).
 
 ## Repository layout
 
