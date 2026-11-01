@@ -9,6 +9,7 @@ import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { readMigrationFiles } from "drizzle-orm/migrator";
+import prettier from "prettier";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const migrations = readMigrationFiles({ migrationsFolder: `${root}/drizzle` });
@@ -17,5 +18,11 @@ import type { MigrationMeta } from "drizzle-orm/migrator";
 
 export const MIGRATIONS: MigrationMeta[] = ${JSON.stringify(migrations, null, 2)};
 `;
-writeFileSync(`${root}/src/db/migrations.ts`, body);
+// Formatted like the rest of the repository, so `pnpm format` leaves it alone
+// and CI's regeneration matches the committed file byte for byte.
+const config = (await prettier.resolveConfig(root)) ?? {};
+writeFileSync(
+  `${root}/src/db/migrations.ts`,
+  await prettier.format(body, { ...config, parser: "typescript" }),
+);
 console.log(`src/db/migrations.ts: ${migrations.length} migrations`);
