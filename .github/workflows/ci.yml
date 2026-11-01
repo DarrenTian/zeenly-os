@@ -34,6 +34,7 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
+      - run: pnpm db:check
       - run: pnpm db:migrate
       - name: Migrations match schema
         run: |

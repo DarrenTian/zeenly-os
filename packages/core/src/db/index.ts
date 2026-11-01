@@ -2,18 +2,20 @@ import { mkdirSync } from "node:fs";
 
 import { PGlite } from "@electric-sql/pglite";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
-import type { MigrationMeta } from "drizzle-orm/migrator";
 import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
 import { drizzle as drizzlePostgres } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
 import { env } from "../env";
 
+import { applyMigrations, schemaStatus, type SchemaStatus } from "./migrate";
 import { MIGRATIONS } from "./migrations";
 import * as schema from "./schema";
 
 /** Any Drizzle Postgres database with our schema: a server, the embedded one, or PGlite in tests. */
 export type Database = PgDatabase<PgQueryResultHKT, typeof schema>;
+
+export type { KernelMigration, SchemaStatus } from "./migrate";
 
 /** The database in use: a Postgres server, or the embedded one on disk. */
 export type DatabaseInfo = {
@@ -32,8 +34,12 @@ type Connection = { db: Database; info: DatabaseInfo };
 function connect(): Connection {
   const { DATABASE_URL, ZEENLY_OS_DATA } = env();
   if (DATABASE_URL) {
-    // `prepare: false` keeps us compatible with transaction poolers.
-    const client = postgres(DATABASE_URL, { prepare: false });
+    // `prepare: false` keeps us compatible with transaction poolers;
+    // `onnotice`: "already exists, skipping" from every migration check is noise.
+    const client = postgres(DATABASE_URL, {
+      prepare: false,
+      onnotice: () => {},
+    });
     return {
       db: drizzlePostgres(client, { schema }),
       info: { kind: "postgres", where: redact(DATABASE_URL) },
@@ -69,27 +75,21 @@ export function databaseInfo(): DatabaseInfo {
 
 /**
  * Applies the migrations `database` hasn't had yet, from the ones compiled
- * into the kernel. The app and the CLI call it as they start, so a new
- * install, or an upgrade, needs no separate step.
+ * into the kernel, under a lock so processes starting together migrate it
+ * once. The server calls it as it starts (unless
+ * ZEENLY_OS_MIGRATE_ON_START=off), and `zeenly-os migrate` runs it on its
+ * own. Returns the migrations it applied.
  */
-export async function migrateDb(database: Database = db()): Promise<void> {
-  // What drizzle's own migrate() does after reading the folder we don't have.
-  // `dialect` and `session` are on every PgDatabase but marked internal, so
-  // the types don't show them.
-  const { dialect, session } = database as unknown as Migrator;
-  await dialect.migrate(MIGRATIONS, session, { migrationsFolder: "bundled" });
+export async function migrateDb(database: Database = db()): Promise<string[]> {
+  return applyMigrations(database, MIGRATIONS);
 }
 
-type Migrator = {
-  dialect: {
-    migrate(
-      migrations: MigrationMeta[],
-      session: unknown,
-      config: { migrationsFolder: string },
-    ): Promise<void>;
-  };
-  session: unknown;
-};
+/** Whether `database` has every migration this kernel carries. */
+export async function checkSchema(
+  database: Database = db(),
+): Promise<SchemaStatus> {
+  return schemaStatus(database, MIGRATIONS);
+}
 
 function redact(url: string): string {
   try {
