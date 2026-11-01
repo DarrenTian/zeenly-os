@@ -23,7 +23,7 @@ The first visit asks for your company's name, your name, and which roles to star
 - **The scheduler**, inside the server, wakes every role that has something to do, every 10 minutes, each in its own Claude Code session with a token that acts only as that role and the tools you granted it. Nothing runs when nothing is pending. `zeenly-os run` makes a pass now.
 - **Answer what climbs to you**: a role's question lands on your desk; your answer goes back down and into that role's guidelines.
 
-Data lives in `~/.zeenly-os`: an embedded Postgres (one process at a time, so the server owns it and the command line talks to the server), one log file per session, and `token`, the server's token for you, readable by your user only. Settings, all optional, as environment variables: `ZEENLY_OS_PORT` (3000), `ZEENLY_OS_DATA`, `ZEENLY_OS_BUDGET_USD` per session (2), `ZEENLY_OS_MAX_TURNS` per session (40), `ZEENLY_OS_EVERY` minutes (10), `ZEENLY_OS_SCHEDULER=off` to run roles only by hand, `ZEENLY_OS_PASSWORD` to require a sign-in when the server is on the internet, `DATABASE_URL` to use a Postgres server instead.
+Data lives in `~/.zeenly-os`: an embedded Postgres (one process at a time, so the server owns it and the command line talks to the server), one log file per session, and `token`, the server's token for you, readable by your user only. Settings, all optional, as environment variables: `ZEENLY_OS_PORT` (3000), `ZEENLY_OS_DATA`, `ZEENLY_OS_BUDGET_USD` per session (2), `ZEENLY_OS_MAX_TURNS` per session (40), `ZEENLY_OS_EVERY` minutes (10), `ZEENLY_OS_SCHEDULER=off` to run roles only by hand, `ZEENLY_OS_PASSWORD` to require a sign-in when the server is on the internet, `DATABASE_URL` to use a Postgres server instead, `ZEENLY_OS_MIGRATE_ON_START=off` to leave migrating to `zeenly-os migrate`.
 
 Subcommands, on a running server: `zeenly-os run` (one scheduler pass now) and `zeenly-os token` (your token, and the `claude mcp add` line that lets your own Claude Code act as you in the tree). The `/token` page mints and revokes tokens too.
 
@@ -39,6 +39,10 @@ The pages and the MCP server run anywhere Next.js does; the scheduler doesn't (i
 Open `/token` on it for a token that acts as you, with the `claude mcp add` line for your own Claude Code; revoke it there when a machine is gone. Roles then run from a machine of yours: the same repository with the same `DATABASE_URL`, `ZEENLY_OS_URL=https://your.deployment` so sessions reach the hosted MCP server, and `pnpm --filter zeenly-os cli`.
 
 A second company is best a second install with its own database: unit ids (`engineering`, say) are global in a database, so two companies with the same role names would collide. A second root in the same database works when its role ids differ; the home page lists every company you steer.
+
+## Upgrading
+
+The server migrates its database as it starts, under a lock, so processes starting together migrate it once. A deploy that should stop before new code goes live if a migration fails sets `ZEENLY_OS_MIGRATE_ON_START=off` and runs `zeenly-os migrate` (with `DATABASE_URL`) first. Code never writes to a database missing migrations it needs: pages still read, and every write says to migrate. A database a newer kernel has migrated is fine, because a migration only adds; removals come a release later (see `CLAUDE.md`, Migrations).
 
 ## Repository layout
 
@@ -57,6 +61,7 @@ pnpm lint                   # ESLint, fails on any warning
 pnpm test                   # Vitest; database tests run on in-memory PGlite
 pnpm format                 # Prettier; `pnpm format:check` only checks
 pnpm db:generate            # after editing packages/core/src/db/schema.ts: a migration, bundled into src/db/migrations.ts
+pnpm db:check               # migrations only add, unless marked `-- contract`; see CLAUDE.md
 ```
 
 `docker compose up -d` gives a local Postgres for trying `DATABASE_URL`; nothing needs it.

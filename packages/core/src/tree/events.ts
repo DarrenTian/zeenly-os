@@ -8,9 +8,10 @@
 
 import { and, desc, eq, lt } from "drizzle-orm";
 
-import { db as defaultDb, type Database } from "../db";
+import { checkSchema, db as defaultDb, type Database } from "../db";
 import { events } from "../db/schema";
 import type { Actor } from "./actors";
+import { SchemaBehind } from "./errors";
 
 export type Event = typeof events.$inferSelect;
 
@@ -65,12 +66,35 @@ export async function write<T>(
   change: (after: T) => Change,
   now: Date = new Date(),
 ): Promise<T> {
+  await assertWritable(database);
   return database.transaction(async (tx) => {
     const after = await apply(tx);
     const named = change(after);
     await record(tx, actor, { ...named, after: named.after ?? after }, now);
     return after;
   });
+}
+
+// Databases found up to date. A database only moves forward, so once it is
+// it stays so for this process; one found behind is asked again on the next
+// write, so writes resume as soon as `zeenly-os migrate` has run.
+const writable = new WeakSet<Database>();
+
+/**
+ * Refuses to write to a database that hasn't had every migration this code
+ * needs: code writing columns that aren't there yet would fail halfway or
+ * worse. A database ahead of the code is fine: migrations only add until
+ * no running version needs what they remove (see CLAUDE.md, Migrations).
+ */
+async function assertWritable(database: Database): Promise<void> {
+  if (writable.has(database)) return;
+  const status = await checkSchema(database);
+  if (status.state === "behind") {
+    throw new SchemaBehind(
+      `The database is behind the code (missing ${status.missing.join(", ")}), so nothing can be written until it's migrated: run \`zeenly-os migrate\`.`,
+    );
+  }
+  writable.add(database);
 }
 
 /** Events newest first: a unit's, or everyone's; `before` an id pages back. */

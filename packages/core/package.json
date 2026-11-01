@@ -14,7 +14,8 @@
     "test": "vitest run",
     "db:generate": "drizzle-kit generate && tsx scripts/bundle-migrations.ts",
     "db:migrate": "drizzle-kit migrate",
-    "db:bundle": "tsx scripts/bundle-migrations.ts"
+    "db:bundle": "tsx scripts/bundle-migrations.ts",
+    "db:check": "tsx scripts/check-migrations.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.3.0",

@@ -1,7 +1,16 @@
+import { PGlite } from "@electric-sql/pglite";
+import { sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/pglite";
 import { describe, expect, it } from "vitest";
+
+import { migrateDb } from "../db";
+import { applyMigrations } from "../db/migrate";
+import { MIGRATIONS } from "../db/migrations";
+import * as schema from "../db/schema";
 
 import { createTestDb } from "../test-db";
 import type { Actor } from "./actors";
+import { SchemaBehind } from "./errors";
 import { issueDirective, translateDirective } from "./directives";
 import { listEvents, write } from "./events";
 import { addTask } from "./tasks";
@@ -111,6 +120,44 @@ describe("events", () => {
         () => ({ what: "x", on: { kind: "x", id: 1 } }),
       ),
     ).rejects.toThrow("undo");
+    expect((await listUnits(db)).map((u) => u.id)).toEqual(["company"]);
+  });
+});
+
+describe("writing on a database behind the code", () => {
+  it("is refused until it's migrated, while reading carries on", async () => {
+    const db = drizzle(new PGlite(), { schema });
+    await applyMigrations(db, MIGRATIONS.slice(0, 1));
+    await expect(
+      createUnit(
+        { id: "company", name: "Company", summary: "x" },
+        FOUNDER,
+        { now: T0 },
+        db,
+      ),
+    ).rejects.toThrow(SchemaBehind);
+    expect(await listUnits(db)).toEqual([]);
+    await migrateDb(db);
+    await createUnit(
+      { id: "company", name: "Company", summary: "x" },
+      FOUNDER,
+      { now: T0 },
+      db,
+    );
+    expect((await listUnits(db)).map((u) => u.id)).toEqual(["company"]);
+  });
+
+  it("goes ahead on a database a newer kernel has migrated", async () => {
+    const db = await createTestDb();
+    await db.execute(
+      sql`insert into drizzle.__drizzle_migrations (hash, created_at) values ('newer', ${Date.now() * 2})`,
+    );
+    await createUnit(
+      { id: "company", name: "Company", summary: "x" },
+      FOUNDER,
+      { now: T0 },
+      db,
+    );
     expect((await listUnits(db)).map((u) => u.id)).toEqual(["company"]);
   });
 });
