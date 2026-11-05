@@ -21,7 +21,7 @@ const U = (id: string): Actor => ({ kind: "unit", id });
 async function tree() {
   const db = await createTestDb();
   await createUnit(
-    { id: "company", name: "Company", summary: "公司" },
+    { id: "company", name: "Company", summary: "The company" },
     FOUNDER,
     {},
     db,
@@ -30,7 +30,7 @@ async function tree() {
     {
       id: "growth",
       parentId: "company",
-      name: "增长",
+      name: "Growth",
       summary: "x",
       mode: "autopilot",
     },
@@ -39,7 +39,7 @@ async function tree() {
     db,
   );
   await createUnit(
-    { id: "eng", parentId: "company", name: "工程", summary: "x" },
+    { id: "eng", parentId: "company", name: "Engineering", summary: "x" },
     FOUNDER,
     {},
     db,
@@ -62,8 +62,8 @@ describe("escalations", () => {
       {
         from: "mkt",
         kind: "escalation",
-        subject: "要不要降价",
-        body: "选项：A/B，我选 A",
+        subject: "Lower the price or not",
+        body: "Options: A/B, I'd pick A",
       },
       U("mkt"),
       {},
@@ -86,7 +86,7 @@ describe("escalations", () => {
       passOnEscalation({ message: m.id, unit: "growth" }, U("eng"), {}, db),
     ).rejects.toThrow(Forbidden);
     const up = await passOnEscalation(
-      { message: m.id, unit: "growth", note: "动定价，超出我" },
+      { message: m.id, unit: "growth", note: "Touches pricing, beyond me" },
       U("growth"),
       {},
       db,
@@ -96,7 +96,7 @@ describe("escalations", () => {
       true,
       ["mkt", "growth", "company"],
     ]);
-    expect(up.body).toContain("growth: 动定价，超出我");
+    expect(up.body).toContain("growth: Touches pricing, beyond me");
     expect((await waitingOnPeople(db)).map((x) => x.id)).toEqual([m.id]);
 
     // On a person's desk, an agent can't settle it; the person can.
@@ -104,14 +104,14 @@ describe("escalations", () => {
       resolveMessage({ message: m.id, resolution: "A" }, U("company"), {}, db),
     ).rejects.toThrow(/person/);
     const done = await resolveMessage(
-      { message: m.id, resolution: "选 A" },
+      { message: m.id, resolution: "Pick A" },
       FOUNDER,
       { now: new Date("2026-10-31T10:00:00Z") },
       db,
     );
     expect([done.status, done.resolution, done.resolvedBy]).toEqual([
       "resolved",
-      "选 A",
+      "Pick A",
       "human:founder",
     ]);
     expect((await answers("mkt", null, db)).map((x) => x.id)).toEqual([m.id]);
@@ -120,7 +120,9 @@ describe("escalations", () => {
       { unit: "mkt", name: "guidelines" },
       db,
     );
-    expect(guidelines?.body).toBe("- 2026-10-31 · 要不要降价 → 选 A");
+    expect(guidelines?.body).toBe(
+      "- 2026-10-31 · Lower the price or not → Pick A",
+    );
     expect(guidelines?.reason).toBe(`Decided escalation ${m.id}`);
     // The unit that merely held it learns nothing.
     expect(await getUnitDoc({ unit: "growth", name: "guidelines" }, db)).toBe(
@@ -169,7 +171,7 @@ describe("escalations", () => {
       db,
     );
     const settled = await resolveMessage(
-      { message: m.id, resolution: "按 A 做" },
+      { message: m.id, resolution: "Go with A" },
       U("growth"),
       {},
       db,
@@ -196,7 +198,12 @@ describe("requests", () => {
       ),
     ).rejects.toThrow(/needs a unit/);
     const r = await sendMessage(
-      { from: "mkt", kind: "request", to: "eng", subject: "加一个落地页" },
+      {
+        from: "mkt",
+        kind: "request",
+        to: "eng",
+        subject: "Add a landing page",
+      },
       U("mkt"),
       {},
       db,
@@ -207,7 +214,7 @@ describe("requests", () => {
       resolveMessage({ message: r.id, resolution: "x" }, U("mkt"), {}, db),
     ).rejects.toThrow(Forbidden);
     const no = await resolveMessage(
-      { message: r.id, resolution: "这周排满", decline: true },
+      { message: r.id, resolution: "This week is full", decline: true },
       U("eng"),
       {},
       db,

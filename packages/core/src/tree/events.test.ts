@@ -24,13 +24,13 @@ describe("events", () => {
   it("record every change with who made it, what it was about and what it served", async () => {
     const db = await createTestDb();
     await createUnit(
-      { id: "company", name: "Company", summary: "公司" },
+      { id: "company", name: "Company", summary: "The company" },
       FOUNDER,
       { now: T0 },
       db,
     );
     await createUnit(
-      { id: "eng", parentId: "company", name: "工程", summary: "x" },
+      { id: "eng", parentId: "company", name: "Engineering", summary: "x" },
       FOUNDER,
       { now: T0 },
       db,
@@ -85,7 +85,7 @@ describe("events", () => {
   it("write a change and its event together, or neither", async () => {
     const db = await createTestDb();
     await createUnit(
-      { id: "company", name: "Company", summary: "公司" },
+      { id: "company", name: "Company", summary: "The company" },
       FOUNDER,
       {},
       db,

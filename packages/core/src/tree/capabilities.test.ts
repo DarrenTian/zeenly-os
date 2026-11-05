@@ -16,19 +16,19 @@ const OTHER: Actor = { kind: "human", id: "someone" };
 async function tree() {
   const db = await createTestDb();
   await createUnit(
-    { id: "company", name: "Company", summary: "公司" },
+    { id: "company", name: "Company", summary: "The company" },
     FOUNDER,
     {},
     db,
   );
   await createUnit(
-    { id: "eng", parentId: "company", name: "工程", summary: "x" },
+    { id: "eng", parentId: "company", name: "Engineering", summary: "x" },
     FOUNDER,
     {},
     db,
   );
   await createUnit(
-    { id: "web", parentId: "eng", name: "前端", summary: "x" },
+    { id: "web", parentId: "eng", name: "Frontend", summary: "x" },
     FOUNDER,
     {},
     db,

@@ -13,19 +13,19 @@ const U = (id: string): Actor => ({ kind: "unit", id });
 async function tree() {
   const db = await createTestDb();
   await createUnit(
-    { id: "company", name: "Company", summary: "公司" },
+    { id: "company", name: "Company", summary: "The company" },
     FOUNDER,
     {},
     db,
   );
   await createUnit(
-    { id: "eng", parentId: "company", name: "工程", summary: "x" },
+    { id: "eng", parentId: "company", name: "Engineering", summary: "x" },
     FOUNDER,
     {},
     db,
   );
   await createUnit(
-    { id: "mkt", parentId: "company", name: "营销", summary: "x" },
+    { id: "mkt", parentId: "company", name: "Marketing", summary: "x" },
     FOUNDER,
     {},
     db,
@@ -37,22 +37,22 @@ describe("tasks", () => {
   it("lists a unit's open work most urgent first; a claim stands until the task moves", async () => {
     const db = await tree();
     const later = await addTask(
-      { unit: "eng", title: "写测试", priority: 2 },
+      { unit: "eng", title: "Write tests", priority: 2 },
       U("eng"),
       {},
       db,
     );
     const now = await addTask(
-      { unit: "eng", title: "修 bug", priority: 0 },
+      { unit: "eng", title: "Fix the bug", priority: 0 },
       U("eng"),
       {},
       db,
     );
-    await addTask({ unit: "mkt", title: "写帖子" }, U("mkt"), {}, db);
+    await addTask({ unit: "mkt", title: "Write a post" }, U("mkt"), {}, db);
     expect(later.source).toBe("unit:eng");
     expect((await listTasks({ unit: "eng" }, db)).map((t) => t.title)).toEqual([
-      "修 bug",
-      "写测试",
+      "Fix the bug",
+      "Write tests",
     ]);
 
     const claimed = await claimTask({ task: now.id }, U("eng"), {}, db);
@@ -82,8 +82,8 @@ describe("tasks", () => {
       {
         from: "company",
         to: ["eng"],
-        title: "首个付费客户",
-        doneWhen: "有人付钱",
+        title: "First paying customer",
+        doneWhen: "Someone pays",
       },
       FOUNDER,
       {},

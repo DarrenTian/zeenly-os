@@ -18,22 +18,27 @@ const U = (id: string): Actor => ({ kind: "unit", id });
 async function tree() {
   const db = await createTestDb();
   await createUnit(
-    { id: "company", name: "Company", summary: "公司", charter: "全公司" },
+    {
+      id: "company",
+      name: "Company",
+      summary: "The company",
+      charter: "The whole company",
+    },
     FOUNDER,
     {},
     db,
   );
   for (const [id, name] of [
-    ["eng", "工程"],
-    ["mkt", "营销"],
-    ["eval", "评测"],
+    ["eng", "Engineering"],
+    ["mkt", "Marketing"],
+    ["eval", "Evaluation"],
   ]) {
     await createUnit(
       {
         id,
         parentId: "company",
         name,
-        summary: `${name}的事`,
+        summary: `${name}'s work`,
         mode: "autopilot",
       },
       FOUNDER,
@@ -46,7 +51,7 @@ async function tree() {
       id: "seo",
       parentId: "mkt",
       name: "SEO",
-      summary: "搜索",
+      summary: "Search",
       mode: "autopilot",
     },
     FOUNDER,
@@ -54,7 +59,7 @@ async function tree() {
     db,
   );
   await createUnit(
-    { id: "elsewhere", name: "别的公司", summary: "x" },
+    { id: "elsewhere", name: "Another company", summary: "x" },
     FOUNDER,
     {},
     db,
@@ -74,8 +79,8 @@ describe("pendingUnits", () => {
       {
         from: "company",
         to: ["eng", "mkt"],
-        title: "首个付费客户",
-        doneWhen: "有人付钱",
+        title: "First paying customer",
+        doneWhen: "Someone pays",
       },
       FOUNDER,
       {},
@@ -99,7 +104,7 @@ describe("pendingUnits", () => {
 
     // Translated and confirmed: due a report; reported: asleep for a day.
     const part = await translateDirective(
-      { directive: d.id, unit: "eng", translation: "上线付费" },
+      { directive: d.id, unit: "eng", translation: "Ship paid plans" },
       U("eng"),
       { now: T0 },
       db,
@@ -163,7 +168,7 @@ describe("pendingUnits", () => {
       db,
     );
     await resolveMessage(
-      { message: m.id, resolution: "做" },
+      { message: m.id, resolution: "Do it" },
       FOUNDER,
       { now: hours(1) },
       db,
@@ -191,8 +196,8 @@ describe("unitView", () => {
       {
         from: "company",
         to: ["mkt"],
-        title: "首个付费客户",
-        doneWhen: "有人付钱",
+        title: "First paying customer",
+        doneWhen: "Someone pays",
       },
       FOUNDER,
       {},
@@ -202,7 +207,7 @@ describe("unitView", () => {
     expect(view.person).toBe("founder");
     expect(view.charter).toBe("");
     expect(view.ancestors.map((a) => [a.id, a.charter])).toEqual([
-      ["company", "全公司"],
+      ["company", "The whole company"],
     ]);
     expect(view.peers.map((p) => p.id).sort()).toEqual(["eng", "eval"]);
     expect(view.children.map((c) => c.id)).toEqual(["seo"]);
@@ -230,21 +235,21 @@ describe("decisionDesk", () => {
       {
         from: "company",
         to: ["eng", "mkt"],
-        title: "首个付费客户",
-        doneWhen: "有人付钱",
+        title: "First paying customer",
+        doneWhen: "Someone pays",
       },
       FOUNDER,
       {},
       db,
     );
     await translateDirective(
-      { directive: d.id, unit: "eng", translation: "上线付费" },
+      { directive: d.id, unit: "eng", translation: "Ship paid plans" },
       U("eng"),
       {},
       db,
     );
     const up = await sendMessage(
-      { from: "mkt", kind: "escalation", subject: "降价？" },
+      { from: "mkt", kind: "escalation", subject: "Lower the price?" },
       U("mkt"),
       {},
       db,
@@ -270,7 +275,7 @@ describe("decisionDesk", () => {
       ),
     ).toEqual([
       ["escalation", up.id],
-      ["confirm", "工程"],
+      ["confirm", "Engineering"],
     ]);
     expect((await decisionDesk("someone", db)).length).toBe(1);
   });

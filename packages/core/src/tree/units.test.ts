@@ -23,7 +23,7 @@ describe("units", () => {
     const db = await createTestDb();
     // A technical founder may start with nothing but engineering.
     await createUnit(
-      { id: "engineering", name: "工程", summary: "把产品做出来" },
+      { id: "engineering", name: "Engineering", summary: "Builds the product" },
       FOUNDER,
       {},
       db,
@@ -32,8 +32,8 @@ describe("units", () => {
       {
         id: "frontend",
         parentId: "engineering",
-        name: "前端",
-        summary: "页面",
+        name: "Frontend",
+        summary: "Pages",
       },
       FOUNDER,
       {},
@@ -41,7 +41,7 @@ describe("units", () => {
     );
     // Later the company grows above it.
     await createUnit(
-      { id: "company", name: "Company", summary: "公司" },
+      { id: "company", name: "Company", summary: "The company" },
       FOUNDER,
       {},
       db,
@@ -71,7 +71,12 @@ describe("units", () => {
   it("keeps the charter as the unit's first document", async () => {
     const db = await createTestDb();
     await createUnit(
-      { id: "eng", name: "工程", summary: "x", charter: "## 管什么\n代码" },
+      {
+        id: "eng",
+        name: "Engineering",
+        summary: "x",
+        charter: "## Owns\nCode",
+      },
       FOUNDER,
       {},
       db,
@@ -79,7 +84,7 @@ describe("units", () => {
     const charter = await getUnitDoc({ unit: "eng", name: "charter" }, db);
     expect([charter?.version, charter?.body, charter?.author]).toEqual([
       1,
-      "## 管什么\n代码",
+      "## Owns\nCode",
       "human:founder",
     ]);
   });
@@ -87,13 +92,13 @@ describe("units", () => {
   it("refuses bad ids, duplicates, unknown parents and cycles", async () => {
     const db = await createTestDb();
     await createUnit(
-      { id: "company", name: "Company", summary: "公司" },
+      { id: "company", name: "Company", summary: "The company" },
       FOUNDER,
       {},
       db,
     );
     await createUnit(
-      { id: "eng", parentId: "company", name: "工程", summary: "x" },
+      { id: "eng", parentId: "company", name: "Engineering", summary: "x" },
       FOUNDER,
       {},
       db,
@@ -120,7 +125,7 @@ describe("units", () => {
   it("lets only a person shape the tree, and only under units they steer", async () => {
     const db = await createTestDb();
     await createUnit(
-      { id: "company", name: "Company", summary: "公司" },
+      { id: "company", name: "Company", summary: "The company" },
       FOUNDER,
       {},
       db,

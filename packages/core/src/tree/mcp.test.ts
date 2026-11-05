@@ -88,7 +88,7 @@ describe("handleMcp", () => {
   it("runs a directive from the person through three units, up to their desk and back", async () => {
     const db = await createTestDb();
     await createUnit(
-      { id: "company", name: "Company", summary: "公司" },
+      { id: "company", name: "Company", summary: "The company" },
       FOUNDER,
       {},
       db,
@@ -107,8 +107,8 @@ describe("handleMcp", () => {
       {
         from: "company",
         to: ["engineering", "marketing", "evaluation"],
-        title: "首个付费客户",
-        doneWhen: "一个商家付了钱",
+        title: "First paying customer",
+        doneWhen: "A merchant has paid",
       },
       FOUNDER,
       {},
@@ -125,7 +125,7 @@ describe("handleMcp", () => {
     const view = await call(db, U("marketing"), "unit_get", {
       unit: "marketing",
     });
-    expect(view.directives[0].directive.title).toBe("首个付费客户");
+    expect(view.directives[0].directive.title).toBe("First paying customer");
     // A unit's agent sees only its own unit, and acts only as it.
     await expect(
       call(db, U("marketing"), "unit_get", { unit: "engineering" }),
@@ -138,9 +138,9 @@ describe("handleMcp", () => {
       }),
     ).rejects.toThrow(/doesn't act for engineering/);
     for (const [unit, translation] of [
-      ["engineering", "试用转付费上线"],
-      ["marketing", "带来 20 个试用商家"],
-      ["evaluation", "证明付费版的排名提升可信"],
+      ["engineering", "Trial-to-paid shipped"],
+      ["marketing", "Bring 20 trial merchants"],
+      ["evaluation", "Prove the paid tier's ranking lift is credible"],
     ]) {
       await call(db, U(unit), "directive_translate", {
         directive: d.id,
@@ -150,7 +150,7 @@ describe("handleMcp", () => {
     }
     await call(db, U("engineering"), "task_add", {
       unit: "engineering",
-      title: "加 Stripe 结账",
+      title: "Add Stripe checkout",
       directive: d.id,
       priority: 0,
     });
@@ -158,8 +158,8 @@ describe("handleMcp", () => {
     const up = await call(db, U("marketing"), "message_send", {
       from: "marketing",
       kind: "escalation",
-      subject: "要不要免费档",
-      body: "选项：有免费档 / 只有试用。我选免费档",
+      subject: "Free tier or not",
+      body: "Options: a free tier / trial only. I'd pick the free tier",
       directive: d.id,
     });
     expect([up.toUnit, up.forPerson]).toEqual(["company", true]);
@@ -183,7 +183,7 @@ describe("handleMcp", () => {
       }
     }
     await resolveMessage(
-      { message: up.id, resolution: "只有试用" },
+      { message: up.id, resolution: "Trial only" },
       FOUNDER,
       {},
       db,
@@ -192,7 +192,7 @@ describe("handleMcp", () => {
     // Marketing's guidelines now carry the decision.
     expect(
       (await getUnitDoc({ unit: "marketing", name: "guidelines" }, db))?.body,
-    ).toContain("要不要免费档 → 只有试用");
+    ).toContain("Free tier or not → Trial only");
 
     // Next run: the units report; marketing reads the answer.
     const next = await call(db, SCHEDULER, "unit_pending", {});
@@ -206,7 +206,7 @@ describe("handleMcp", () => {
           unit,
           directive: d.id,
           status: unit === "engineering" ? "risk" : "ok",
-          headline: `${unit} 在推进`,
+          headline: `${unit} is moving`,
         })
       ).id;
     }
@@ -214,14 +214,14 @@ describe("handleMcp", () => {
       call(db, U("company"), "report_submit", {
         unit: "company",
         status: "ok",
-        headline: "都好",
+        headline: "All good",
       }),
     ).rejects.toThrow(/cites a report/);
     await call(db, U("company"), "report_submit", {
       unit: "company",
       status: "risk",
       headline: {
-        text: "首个付费客户：结账有风险",
+        text: "First paying customer: checkout is at risk",
         cites: [reports.engineering],
       },
     });
@@ -234,9 +234,9 @@ describe("handleMcp", () => {
     expect(
       got.assignments.map((a: { translation: string }) => a.translation),
     ).toEqual([
-      "试用转付费上线",
-      "带来 20 个试用商家",
-      "证明付费版的排名提升可信",
+      "Trial-to-paid shipped",
+      "Bring 20 trial merchants",
+      "Prove the paid tier's ranking lift is credible",
     ]);
     expect(got.reports).toHaveLength(3);
 
@@ -259,7 +259,7 @@ describe("handleMcp", () => {
       directive: d.id,
       unit: "company",
       status: "done",
-      outcome: "第一个商家付了钱",
+      outcome: "The first merchant paid",
     });
     expect((await getDirective(d.id, db))?.status).toBe("done");
   });

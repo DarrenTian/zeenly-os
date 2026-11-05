@@ -21,13 +21,18 @@ const MKT: Actor = { kind: "unit", id: "marketing" };
 async function tree() {
   const db = await createTestDb();
   await createUnit(
-    { id: "company", name: "Company", summary: "root", charter: "全公司" },
+    {
+      id: "company",
+      name: "Company",
+      summary: "root",
+      charter: "The whole company",
+    },
     FOUNDER,
     {},
     db,
   );
   await createUnit(
-    { id: "marketing", parentId: "company", name: "营销", summary: "x" },
+    { id: "marketing", parentId: "company", name: "Marketing", summary: "x" },
     FOUNDER,
     {},
     db,
@@ -42,8 +47,8 @@ describe("a unit's documents", () => {
     const handbook = {
       unit: "marketing",
       name: "handbook",
-      body: "一条帖子一种语言",
-      reason: "初稿",
+      body: "One post, one language",
+      reason: "First draft",
     };
     await saveUnitDoc({ ...handbook, baseVersion: 0 }, MKT, {}, db);
     // The same text again adds nothing, and leaves no change event.
@@ -56,7 +61,12 @@ describe("a unit's documents", () => {
     expect(after[0].what).toBe("doc.unchanged");
 
     await saveUnitDoc(
-      { ...handbook, body: "回复亲手写", baseVersion: 1, reason: "加一条" },
+      {
+        ...handbook,
+        body: "Write replies by hand",
+        baseVersion: 1,
+        reason: "Add a line",
+      },
       FOUNDER,
       {},
       db,
@@ -74,10 +84,10 @@ describe("a unit's documents", () => {
           db,
         )
       )?.body,
-    ).toBe("一条帖子一种语言");
+    ).toBe("One post, one language");
     expect(
       (await getUnitDoc({ unit: "marketing", name: "handbook" }, db))?.body,
-    ).toBe("回复亲手写");
+    ).toBe("Write replies by hand");
     expect(
       (await unitView("marketing", db)).docs.map((d) => [
         d.name,
@@ -157,18 +167,20 @@ describe("a unit's documents", () => {
       {
         unit: "marketing",
         name: "charter",
-        body: "管对外怎么说",
+        body: "Owns what we say outside",
         baseVersion: 0,
-        reason: "定职责",
+        reason: "Set the charter",
       },
       FOUNDER,
       {},
       db,
     );
-    expect((await unitView("marketing", db)).charter).toBe("管对外怎么说");
+    expect((await unitView("marketing", db)).charter).toBe(
+      "Owns what we say outside",
+    );
     expect(Object.fromEntries(await latestDocBodies("charter", db))).toEqual({
-      company: "全公司",
-      marketing: "管对外怎么说",
+      company: "The whole company",
+      marketing: "Owns what we say outside",
     });
   });
 });
