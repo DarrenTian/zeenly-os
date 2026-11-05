@@ -21,7 +21,7 @@ const U = (id: string): Actor => ({ kind: "unit", id });
 async function tree() {
   const db = await createTestDb();
   await createUnit(
-    { id: "company", name: "Company", summary: "公司" },
+    { id: "company", name: "Company", summary: "The company" },
     FOUNDER,
     {},
     db,
@@ -52,8 +52,8 @@ async function tree() {
 const GOAL = {
   from: "company",
   to: ["eng", "mkt", "eval"],
-  title: "首个付费客户",
-  doneWhen: "一个商家付了钱",
+  title: "First paying customer",
+  doneWhen: "A merchant has paid",
   dueOn: "2026-11-08",
 };
 
@@ -71,8 +71,8 @@ describe("directives", () => {
       {
         from: "eng",
         to: ["mkt", "seo"],
-        title: "写上线说明",
-        doneWhen: "发出去",
+        title: "Write the launch notes",
+        doneWhen: "It is sent",
       },
       U("eng"),
       {},
@@ -91,7 +91,11 @@ describe("directives", () => {
     expect(d.assignments.every((a) => a.needsConfirm)).toBe(true);
 
     const proposed = await translateDirective(
-      { directive: d.id, unit: "eng", translation: "两周内上线付费墙" },
+      {
+        directive: d.id,
+        unit: "eng",
+        translation: "Ship the paywall within two weeks",
+      },
       U("eng"),
       {},
       db,
@@ -108,22 +112,22 @@ describe("directives", () => {
     ).rejects.toThrow(Forbidden);
     // Sent back: the unit translates again, reading the note.
     const back = await confirmTranslation(
-      { assignment: proposed.id, ok: false, note: "先做试用转付费" },
+      { assignment: proposed.id, ok: false, note: "Trial-to-paid first" },
       FOUNDER,
       { now: new Date("2026-10-31T10:00:00Z") },
       db,
     );
-    expect([back.state, back.note]).toEqual(["new", "先做试用转付费"]);
+    expect([back.state, back.note]).toEqual(["new", "Trial-to-paid first"]);
     const guidelines = await getUnitDoc(
       { unit: "eng", name: "guidelines" },
       db,
     );
     expect(guidelines?.version).toBe(1);
     expect(guidelines?.body).toBe(
-      `- 2026-10-31 · directive ${d.id} "首个付费客户": translation sent back: 先做试用转付费`,
+      `- 2026-10-31 · directive ${d.id} "First paying customer": translation sent back: Trial-to-paid first`,
     );
     await translateDirective(
-      { directive: d.id, unit: "eng", translation: "上线试用转付费" },
+      { directive: d.id, unit: "eng", translation: "Ship trial-to-paid" },
       U("eng"),
       {},
       db,
@@ -136,7 +140,7 @@ describe("directives", () => {
     );
     expect([ok.state, ok.translation, ok.note]).toEqual([
       "active",
-      "上线试用转付费",
+      "Ship trial-to-paid",
       null,
     ]);
     await expect(
@@ -160,7 +164,7 @@ describe("directives", () => {
       {
         directive: passed.id,
         unit: "seo",
-        translation: "排行榜页面带试用入口",
+        translation: "Leaderboard page with a trial entry",
       },
       U("seo"),
       {},
@@ -185,13 +189,16 @@ describe("directives", () => {
         directive: d.id,
         unit: "eval",
         relevant: false,
-        reason: "评测不碰收费",
+        reason: "Evaluation doesn't touch billing",
       },
       U("eval"),
       {},
       db,
     );
-    expect([no.state, no.note]).toEqual(["declined", "评测不碰收费"]);
+    expect([no.state, no.note]).toEqual([
+      "declined",
+      "Evaluation doesn't touch billing",
+    ]);
     await expect(
       translateDirective(
         { directive: d.id, unit: "seo", translation: "x" },
@@ -253,7 +260,7 @@ describe("directives", () => {
         directive: d.id,
         unit: "company",
         status: "done",
-        outcome: "第一个商家付了 $49",
+        outcome: "The first merchant paid $49",
       },
       FOUNDER,
       {},
@@ -264,7 +271,7 @@ describe("directives", () => {
     const child = (await getDirective(passed.id, db))!;
     expect([child.status, child.outcome]).toEqual([
       "done",
-      `Closed with directive ${d.id}: 第一个商家付了 $49`,
+      `Closed with directive ${d.id}: The first merchant paid $49`,
     ]);
     expect(await listTasks({ unit: "seo" }, db)).toEqual([]);
     await expect(

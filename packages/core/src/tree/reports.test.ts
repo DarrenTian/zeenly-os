@@ -12,25 +12,25 @@ const U = (id: string): Actor => ({ kind: "unit", id });
 async function tree() {
   const db = await createTestDb();
   await createUnit(
-    { id: "company", name: "Company", summary: "公司" },
+    { id: "company", name: "Company", summary: "The company" },
     FOUNDER,
     {},
     db,
   );
   await createUnit(
-    { id: "eng", parentId: "company", name: "工程", summary: "x" },
+    { id: "eng", parentId: "company", name: "Engineering", summary: "x" },
     FOUNDER,
     {},
     db,
   );
   await createUnit(
-    { id: "mkt", parentId: "company", name: "营销", summary: "x" },
+    { id: "mkt", parentId: "company", name: "Marketing", summary: "x" },
     FOUNDER,
     {},
     db,
   );
   await createUnit(
-    { id: "other", name: "别的树", summary: "x" },
+    { id: "other", name: "Another tree", summary: "x" },
     FOUNDER,
     {},
     db,
@@ -47,16 +47,16 @@ describe("reports", () => {
       {
         unit: "eng",
         status: "ok",
-        headline: "付费墙上线了",
-        done: ["合并 #130"],
-        numbers: [{ name: "付费商家", value: 0, target: 1 }],
+        headline: "Paywall shipped",
+        done: ["Merged #130"],
+        numbers: [{ name: "paying merchants", value: 0, target: 1 }],
       },
       U("eng"),
       { now: T0 },
       db,
     );
-    expect(r.headline).toEqual({ text: "付费墙上线了", cites: [] });
-    expect(r.done).toEqual([{ text: "合并 #130", cites: [] }]);
+    expect(r.headline).toEqual({ text: "Paywall shipped", cites: [] });
+    expect(r.done).toEqual([{ text: "Merged #130", cites: [] }]);
     expect(r.author).toBe("unit:eng");
     await expect(
       submitReport(
@@ -74,8 +74,8 @@ describe("reports", () => {
       {
         unit: "eng",
         status: "risk",
-        headline: "支付还没接",
-        blocked: ["等 Stripe 账户"],
+        headline: "Payments not wired yet",
+        blocked: ["Waiting on the Stripe account"],
       },
       U("eng"),
       { now: T0 },
@@ -92,14 +92,14 @@ describe("reports", () => {
         {
           unit: "company",
           status: "risk",
-          headline: { text: "首个付费客户有风险", cites: [eng.id] },
-          done: ["营销进展顺利"],
+          headline: { text: "First paying customer at risk", cites: [eng.id] },
+          done: ["Marketing is on track"],
         },
         U("company"),
         {},
         db,
       ),
-    ).rejects.toThrow(/“营销进展顺利”/);
+    ).rejects.toThrow(/“Marketing is on track”/);
     await expect(
       submitReport(
         {
@@ -116,7 +116,10 @@ describe("reports", () => {
       {
         unit: "company",
         status: "risk",
-        headline: { text: "首个付费客户卡在支付", cites: [eng.id] },
+        headline: {
+          text: "First paying customer stuck on payments",
+          cites: [eng.id],
+        },
       },
       U("company"),
       { now: T0 },
@@ -129,7 +132,7 @@ describe("reports", () => {
     const db = await tree();
     await expect(
       submitReport(
-        { unit: "eng", status: "stuck", headline: "卡住了" },
+        { unit: "eng", status: "stuck", headline: "Stuck" },
         U("eng"),
         {},
         db,
@@ -147,7 +150,7 @@ describe("reports", () => {
     );
     // A newer report replaces the older one.
     await submitReport(
-      { unit: "eng", status: "ok", headline: "好了" },
+      { unit: "eng", status: "ok", headline: "Done" },
       U("eng"),
       { now: new Date(T0.getTime() + 1000) },
       db,
@@ -159,7 +162,7 @@ describe("reports", () => {
       db,
     );
     const latest = await latestReports(db);
-    expect(latest.get("eng")?.headline.text).toBe("好了");
+    expect(latest.get("eng")?.headline.text).toBe("Done");
     const rolled = rollUp(await listUnits(db), latest);
     expect(Object.fromEntries(rolled)).toEqual({
       company: "risk",
